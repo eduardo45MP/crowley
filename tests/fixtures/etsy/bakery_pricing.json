@@ -1,0 +1,22 @@
+{
+  "listing_id": 123456789,
+  "title": "  Bakery  Pricing Calculator  ",
+  "url": "https://www.etsy.com/listing/123456789/bakery-pricing?utm_source=test&variation=42",
+  "price": {
+    "amount": 1299,
+    "divisor": 100,
+    "currency_code": "USD"
+  },
+  "review_count": "1,234 reviews",
+  "rating": "4.9 / 5",
+  "shop_name": "  Baking Tools Studio ",
+  "tags": ["Bakery", " pricing calculator ", "bakery", ""],
+  "description": "Price every recipe\n with confidence.",
+  "images": [
+    {"url_fullxfull": "https://images.example.test/123.jpg?utm_campaign=test"}
+  ],
+  "category": "Digital Templates",
+  "product_type": "calculator",
+  "original_creation_timestamp": 1754784000
+}
+
