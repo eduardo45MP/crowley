@@ -1,302 +1,231 @@
 # Crowley Architecture
 
-## 1. Purpose and scope
+## Visão geral
 
-Crowley is a market-research and market-intelligence pipeline for discovering, evaluating, and ranking opportunities for niche digital products. Its first use case is identifying spreadsheets, calculators, and operational trackers/templates that can be sold in digital marketplaces.
+Crowley é um pipeline local de market intelligence para identificar oportunidades comerciais em nichos digitais. O código implementado hoje cobre coleta, normalização, clustering e análise de mercado em várias dimensões independentes antes da consolidação final em um Opportunity Score.
 
-The system turns marketplace listings and external demand signals into evidence-backed product-market opportunities:
+A arquitetura real do projeto é a seguinte:
 
 ```text
-Sources
-  -> crawler/connectors
-  -> immutable raw data
+crawler
+  -> raw listings
   -> normalization
-  -> enrichment
-  -> clustering into product markets
-  -> market analysis
-  -> opportunity scoring
-  -> API / dashboard / reports
+  -> product clustering
+  -> market intelligence dimensions
+      -> demand
+      -> competition
+      -> purchase_intent
+      -> build_ease
+      -> differentiation
+      -> opportunity score
+      -> eligibility filters
+      -> selection
+      -> deep research
 ```
 
-Crowley does not treat a listing as an opportunity. Listings are observations; a cluster of comparable listings and external signals represents a candidate product market. Scores are comparative estimates built from evidence, not claims of sales or guaranteed revenue.
+Este projeto não define, neste momento, uma API HTTP, dashboard, exportador de relatórios ou fila de jobs como parte do código executável. O que existe é um monólito modular com módulos bem separados e uma base relacional SQLite-first.
 
-The initial product is a research report containing 100 ranked opportunities, a detailed Top 10, methodology, evidence, suggested pricing and positioning, keywords, and estimated build effort. A complementary spreadsheet exposes the ranking and its inputs for filtering and inspection.
+## Status da arquitetura
 
-## 2. Architectural decision: modular monolith first
+### Implementado
 
-Crowley should begin as a **modular monolith**, not as microservices.
+- `src/crawler`: coleta, normalização, clustering e persistência
+- `src/market_intelligence/demand`: análise de demanda
+- `src/market_intelligence/competition`: análise competitiva
+- `src/market_intelligence/purchase_intent`: intenção de compra
+- `src/market_intelligence/build_ease`: facilidade de produção
+- `src/market_intelligence/differentiation`: diferenciação e potencial de nicho
+- `src/market_intelligence/opportunity`: agregação final em 0-100
+- `src/market_intelligence/eligibility`: filtro de elegibilidade para ranking
+- `src/market_intelligence/selection`: seleção de portfólio final
+- `src/market_intelligence/deep_research`: deep research determinístico e auditável
 
-The crawler, normalizer, enrichment pipeline, clustering engine, analyzers, scoring engine, and reporting layer should live in one deployable application with explicit module boundaries. Background workers may run as separate processes from the API, but they use the same codebase and versioned domain contracts.
+### Planejado / não implementado no código atual
 
-This choice provides:
+- API REST ou GraphQL
+- dashboard interno
+- relatórios PDF/XLSX/CSV automatizados
+- workers assíncronos independentes
+- migrações Alembic
+- LLM em deep research
 
-- simple local development and deployment;
-- atomic database changes and easier reproducibility;
-- low operational overhead while scoring assumptions change quickly;
-- direct tracing of evidence from a report back to its source;
-- module boundaries that permit later extraction when scale or team ownership justifies it.
+Essas camadas podem ser evoluções futuras, mas não devem ser apresentadas como já existentes.
 
-Separate services are warranted only after measured pressure appears, such as independently scaling browser-heavy collection, isolating untrusted extraction workloads, assigning a component to a separate team, or meeting distinct availability requirements. Network boundaries must not be introduced merely to imitate the logical pipeline.
+## Princípios da arquitetura
 
-## 3. Architectural principles
+1. Evidência antes de geração.
+2. Dados brutos são imutáveis.
+3. Cada camada analítica trabalha sobre resultados da etapa anterior e não reescreve evidências anteriores.
+4. Scores devem ser auditáveis e explicáveis.
+5. O Opportunity Score não tenta descobrir novos fatos de mercado; ele apenas agrega dimensões independentes já produzidas.
+6. Eligibility e selection são etapas separadas de ranking.
+7. Deep research adiciona due diligence, mas não altera o score upstream.
 
-1. **Evidence before generation.** Every conclusion and score must be traceable to collected observations or an explicitly identified estimate.
-2. **Raw data is immutable.** Preserve source responses and collection context so normalization and scoring can be rerun without recrawling.
-3. **Separate facts, derived features, and judgments.** Source observations, deterministic transformations, model-derived annotations, and editorial decisions have different provenance and confidence.
-4. **Idempotent, resumable processing.** A job may be retried without duplicating logical records or corrupting downstream state.
-5. **Version every material transformation.** Parsers, taxonomies, prompts/models, cluster assignments, feature definitions, and score formulas are versioned.
-6. **Scores are explainable snapshots.** A ranked opportunity records its component scores, weights, evidence window, exclusions, and calculation version.
-7. **Source adapters do not leak into the domain.** Marketplace-specific fields stop at the normalization boundary.
-8. **Human review is a first-class stage.** Automated ranking narrows the research space; it does not remove editorial review, particularly for the Top 25 and Top 10.
-9. **Compliance by design.** Collection respects applicable terms, robots policies, rate limits, privacy constraints, and source-specific retention rules.
-10. **Start narrow and validate predictive value.** The first goal is to outperform ad hoc manual research, not to build a general web crawler or SaaS.
+## Camadas do sistema
 
-## 4. System context
+### 1. Crawler
 
-```text
- Marketplace APIs/pages       External signals       Editorial inputs
- Etsy / Gumroad / ...     Search / trends / forums   niches / exclusions
-          \                         |                         /
-           +------------------------+------------------------+
-                                    |
-                              Crowley pipeline
-                                    |
-                +-------------------+-------------------+
-                |                   |                   |
-             REST API          Dashboard/admin     Report exports
-                                                    PDF / XLSX / CSV
-```
+O crawler coleta listings em marketplaces e salva raw payloads e modelos canônicos. A interface principal é a CLI em `src/crawler/cli.py`.
 
-External sources answer different questions. Marketplace data indicates whether products are offered and how buyers appear to engage with them. Search and trend data indicate discovery demand. Community content reveals recurring problems and language. None is a direct substitute for verified sales data.
+Responsabilidades:
 
-## 5. Components, responsibilities, and boundaries
+- buscar listings por query
+- normalizar para o domínio canônico
+- preservar payloads brutos em `raw_marketplace_products`
+- persistir `products` canônicos
+- agrupar itens em `product_clusters`
 
-### 5.1 Research catalog
+### 2. Clustering
 
-Owns the controlled research universe:
+A etapa de clustering converte produtos canônicos em mercados de produto. A lógica está em `src/crawler/clustering.py`, com taxonomia em `src/taxonomy`.
 
-- buyer segments, professions, niches, problems, and product types;
-- seed terms and query templates;
-- combinations such as `niche x problem x tool type`;
-- source coverage plans, locale, language, and scheduling;
-- legal, medical, financial, and other exclusion policies.
+Os clusters são baseados em termos de nicho, problema, tipo de produto e palavras-chave, e persistidos no banco com `cluster_runs` e `product_clusters`.
 
-It produces versioned research campaigns and queries. It does not collect source data or rank opportunities.
+### 3. Market Intelligence
 
-### 5.2 Source connectors and crawler
+A camadas de inteligência de mercado são independentes entre si. Cada uma produz um score e um contexto de confiança/coverage para um cluster.
 
-Each connector translates a campaign query into source requests and captures the response with collection metadata. Depending on the source, it may use an official API, permitted HTTP extraction, browser automation, or manual import.
+Atualmente, as dimensões implementadas são:
 
-Responsibilities:
+- demand
+- competition
+- purchase_intent
+- build_ease
+- differentiation
 
-- source-specific authentication, pagination, throttling, and retry policy;
-- robots/terms-aware collection and source-specific concurrency limits;
-- capture of title, URL, marketplace, price, reviews, rating, seller, category, tags, summary, images, product type, and approximate listing age when available;
-- content fingerprinting and deduplication;
-- emission of a raw-observation event.
+Cada uma usa um `AnalysisRun` e um `Cluster...Score` persistidos no SQLAlchemy repository.
 
-The crawler returns observations; it does not infer a canonical niche, calculate scores, or embed editorial rules. Connector failures must be isolated by source and query.
+### 4. Opportunity Score
 
-### 5.3 Raw data store
+O Opportunity Score está em `src/market_intelligence/opportunity/` e combina as dimensões independentes com pesos fixos em configuração.
 
-Stores immutable source payloads or snapshots plus request/response metadata:
-
-- source, canonical URL or external ID, query, collection time, locale, and status;
-- content hash, payload location, media references, and parser version intended for processing;
-- consent, license, retention, or collection-policy metadata where applicable.
-
-Large HTML/JSON/media payloads belong in object storage; searchable metadata belongs in the relational database. Raw records are append-only. Corrections create new records rather than overwriting source history.
-
-### 5.4 Normalization
-
-Maps source-specific observations into a canonical listing model. It handles currency and unit conversion, text cleanup, seller/source identities, URLs, timestamps, availability, and typed attributes.
-
-Normalization is deterministic where possible. Unknown values remain unknown; missing data must not silently become zero. The normalized record retains a pointer to every raw input and the normalizer version.
-
-### 5.5 Enrichment
-
-Adds derived attributes needed for matching and analysis:
-
-- language detection and optional translated search text;
-- taxonomy classification for niche, problem, buyer segment, and product type;
-- keyword and feature extraction;
-- price normalization to a reporting currency using a dated exchange rate;
-- text/image embeddings;
-- quality, relevance, and confidence signals;
-- complaint, missing-feature, and purchase-intent cues from reviews or community content.
-
-Rules and statistical/LLM outputs are stored separately from normalized facts. Model name, model/prompt version, input hash, output, confidence, cost, and execution time are retained. Low-confidence results enter a review queue.
-
-### 5.6 Entity resolution and deduplication
-
-Identifies repeated observations of the same listing and probable cross-marketplace duplicates. Exact source IDs and canonical URLs are preferred; fuzzy title, seller, image, and embedding matches provide candidates.
-
-Matches above an automatic threshold are linked, ambiguous matches await review, and non-matches remain separate. Original records are never destroyed by deduplication.
-
-### 5.7 Clustering engine
-
-Groups comparable listings into candidate product markets, for example bakery pricing calculators or Airbnb ROI calculators. Clustering combines taxonomy constraints, keywords, embeddings, and deterministic business rules.
-
-The engine owns cluster membership and cluster summaries, not opportunity scores. Each clustering run is an immutable snapshot containing algorithm/configuration versions, feature set, input window, membership confidence, and representative terms. Human merge, split, and exclusion decisions are recorded as auditable overrides.
-
-### 5.8 Market analyzer
-
-Aggregates listing, source, search, trend, community, and editorial signals for a cluster and a defined observation window. It creates versioned feature snapshots for six initial dimensions:
-
-- **Demand:** listing activity, accumulated reviews, leader reviews, seller diversity, cross-marketplace presence, search/trend signals, content volume, and community questions.
-- **Competition favorability:** competitor count and quality, review concentration, price distribution, visual/product depth, and signs of imperfect competition. A high score means favorable competition, not more competition.
-- **Purchase intent:** financial impact, frequency, urgency, cost of error, and perceived value.
-- **Build ease:** estimated formula/logic complexity, tabs or screens, external data/API needs, design burden, maintenance burden, and estimated hours.
-- **Differentiation:** missing features, complaints, UX/visual quality gaps, automation, documentation, customization, and localization potential.
-- **Price potential:** observed minimum/median/maximum, comparable depth, and plausible Basic/Pro/Bundle positioning.
-
-The analyzer keeps raw measurements and their confidence alongside normalized 0-100 dimension scores. Review counts, trends, and other proxies are explicitly labeled as proxies.
-
-### 5.9 Policy and eligibility engine
-
-Applies eliminatory filters before ranking. Initial exclusions include high legal or regulated-advice risk, medical advice, misleading financial claims, unverifiable demand, dependence on inaccessible paid data, extreme competition, trivial products, and no credible differentiation path.
-
-Rules return structured reason codes and supporting evidence. Exclusion does not delete an opportunity; it changes eligibility for a specific ranking run. Manual exceptions require an author, rationale, and timestamp.
-
-### 5.10 Scoring and ranking engine
-
-Calculates an explainable score from a feature snapshot. An initial formula is:
+A regra de composição é:
 
 ```text
 Opportunity Score =
-    0.30 * demand
-  + 0.20 * purchase_intent
-  + 0.15 * competition_favorability
-  + 0.15 * differentiation
-  + 0.10 * build_ease
-  + 0.10 * price_potential
+  0.30 * demand
++ 0.20 * purchase_intent
++ 0.15 * competition
++ 0.15 * differentiation
++ 0.10 * build_ease
++ 0.10 * price_potential
 ```
 
-Weights are configuration, not source code constants. Every score stores the exact formula version, component values, weights, missing-data policy, confidence, input snapshot, and calculation time.
+A implementação atual também registra:
 
-Ranking occurs after eligibility checks. Top 100 selection may apply explicit diversity constraints across segments; therefore final rank is not always a pure descending sort. The engine records whether a candidate moved because of a diversity rule.
+- `dimension_coverage`
+- `evidence_coverage`
+- `opportunity_confidence`
+- `bottlenecks`
+- `strongest_dimension`
+- `weakest_dimension`
+- `fatal_weaknesses`
+- `ranking_eligible`
 
-A separate **Revenue Efficiency Score** may compare opportunity to build effort. It is a prioritization aid, not a revenue forecast, and should not be folded into the core score until validation supports it.
+Importante: a camada de opportunity não faz nova investigação; ela apenas consolida os outputs das demais camadas.
 
-### 5.11 Research and editorial workflow
+### 5. Eligibility Filters
 
-Automated analysis produces the Top 100 candidate set. The Top 25 receive deeper competitor, pricing, review, keyword, screenshot, and feature research. The Top 10 receive an opportunity thesis, product blueprint, formulas/features, positioning, proposed price tiers, build estimate, and supporting evidence.
+A elegibilidade está em `src/market_intelligence/eligibility/` e responde se a oportunidade é aceitável para entrar em ranking e potencial produção.
 
-Editorial annotations and approvals are separate domain records. Generated prose must cite evidence IDs and distinguish observed facts from estimates. Publication requires a reproducible ranking snapshot and an editorial approval state.
+As regras cobrem:
 
-### 5.12 API and dashboard
+- demanda mínima
+- confiança mínima
+- cobertura mínima de evidência
+- risco de nicho regulado
+- product types restritos
+- sinais de fraude ou promessas irrealistas
+- complexidade excessiva de build
 
-The API exposes campaigns, jobs, listings, clusters, evidence, scores, rankings, reviews, and report artifacts. The initial dashboard is an internal research/admin interface for:
+A decisão final é `eligible`, `review_required`, `ineligible` ou `insufficient_data`.
 
-- monitoring collection and processing;
-- inspecting provenance and failures;
-- reviewing uncertain classifications and duplicate/cluster suggestions;
-- comparing score components and formula versions;
-- applying auditable overrides;
-- approving a ranking/report snapshot.
+### 6. Selection
 
-Public SaaS functionality is outside the MVP. API contracts should be designed around resources and snapshots rather than internal database tables.
+A seleção está em `src/market_intelligence/selection/` e não é uma ordenação simples.
 
-### 5.13 Reporting and export
+A lógica faz:
 
-Builds artifacts from an approved, frozen ranking snapshot:
+- filtra candidatos elegíveis
+- aplica mínimo de oportunidade e confiança
+- respeita quotas por buyer group
+- limita por nicho e problema
+- diversifica o portfólio
 
-- PDF report with executive summary, methodology, Top 10, ranks 11-100, category views, validation/pricing guidance, and appendix;
-- XLSX/CSV with rank, product, niche, sources, component scores, prices, build effort, final score, confidence, keywords, and evidence references;
-- charts for ranking, niche distribution, prices, difficulty, demand, and competition;
-- optional machine-readable JSON export.
+A saída final é um conjunto de oportunidades selecionadas com `selection_rank`, `quota_bucket` e utilidade de seleção.
 
-Report generation is deterministic for a given content snapshot and template version. Artifacts store hashes and links to all inputs used.
+### 7. Deep Research
 
-## 6. End-to-end data flow
+A deep research está em `src/market_intelligence/deep_research/` e tem duas metas explícitas:
 
-1. A researcher creates a campaign from a versioned niche/problem/tool vocabulary.
-2. The query generator expands seeds into source-specific search queries.
-3. The scheduler creates rate-limited collection jobs.
-4. Connectors fetch or import observations and append raw payloads.
-5. Normalization maps new observations to canonical listings.
-6. Entity resolution links duplicates without destroying source history.
-7. Enrichment classifies listings, extracts features, and creates embeddings.
-8. A clustering run groups listings into product-market candidates.
-9. Signal collectors and the market analyzer compute a time-bounded feature snapshot per cluster.
-10. The eligibility engine records exclusions and warnings.
-11. The scoring engine calculates component and overall scores.
-12. The ranking engine selects an ordered, diversity-aware Top 100.
-13. Researchers deepen and approve the Top 25 and Top 10 analyses.
-14. Reporting freezes the approved snapshot and creates PDF/spreadsheet/API artifacts.
-15. When products are launched, outcome metrics are linked back to the prediction for calibration.
+- executar due diligence para as oportunidades selecionadas
+- produzir dossiers auditáveis e determinísticos
 
-Each step consumes an immutable or versioned input and publishes a new output. Reprocessing creates a new version; it does not rewrite a published historical result.
+A V1 não usa LLM. Ela sintetiza:
 
-## 7. Conceptual data model
+- pricing analysis
+- competitor profiles
+- keyword analysis
+- product structure analysis
+- review themes
+- market patterns
+- confirmations, contradictions e warnings
 
-| Entity | Purpose | Key relationships |
-|---|---|---|
-| `ResearchCampaign` | Scope, locale, sources, window, and goal of a research run | has queries and runs |
-| `TaxonomyTerm` | Versioned segment, niche, problem, product type, or keyword | used by queries and classifications |
-| `SearchQuery` | Generated or curated source query | belongs to campaign; has collection jobs |
-| `CollectionJob` | One resumable source/query/page task | creates raw observations |
-| `RawObservation` | Immutable source response and metadata | points to payload; produces normalized observations |
-| `Listing` | Stable logical source listing identity | has observation versions and enrichments |
-| `ListingObservation` | Canonical listing facts at a collection time | derived from raw observation |
-| `Enrichment` | Versioned classifications, extracted features, or embeddings | belongs to listing/observation |
-| `ProductMarket` | Stable editorial identity for a candidate market | has cluster snapshots and analyses |
-| `ClusterRun` | Versioned clustering execution | contains cluster memberships |
-| `ClusterMembership` | Listing-to-market assignment with confidence | links listing and product market |
-| `Evidence` | Addressable fact/proxy with source, time, and confidence | supports features, scores, and claims |
-| `FeatureSnapshot` | Time-bounded measurements for a product market | input to eligibility and scoring |
-| `EligibilityDecision` | Pass/exclude/warn with rule reasons | applies to feature snapshot/ranking run |
-| `Scorecard` | Component scores, weights, result, and confidence | belongs to formula and feature snapshot |
-| `RankingRun` | Ordered eligible set plus diversity policy | contains ranked opportunities |
-| `EditorialReview` | Human decision, rationale, and annotations | targets market, scorecard, or report item |
-| `ReportSnapshot` | Frozen approved content and evidence graph | produces report artifacts |
-| `ReportArtifact` | PDF, XLSX, CSV, or JSON output | belongs to report snapshot |
-| `OutcomeObservation` | Views, CTR, favorites, sales, conversion, price, revenue | links a built product to a prior scorecard |
-| `ModelVersion` | Parser, taxonomy, prompt/model, algorithm, or formula identity | referenced by all derived records |
+A deep research não reescreve o score original; ela apenas adiciona contexto de pesquisa.
 
-Stable identities (`Listing`, `ProductMarket`) are distinct from time/version-specific observations and snapshots. This supports historical comparison and second editions without erasing past conclusions.
-
-## 8. Jobs and domain events
-
-The MVP can use a database-backed job queue or a small message broker. Delivery is at least once; consumers must be idempotent. A durable outbox written in the same transaction as domain state prevents lost event publication.
-
-Representative jobs:
-
-- `generate_queries(campaign_id)`
-- `collect_source(query_id, cursor)`
-- `normalize_observation(raw_observation_id)`
-- `resolve_listing_identity(listing_observation_id)`
-- `enrich_listing(listing_id, enrichment_profile)`
-- `build_clusters(campaign_id, clustering_version)`
-- `collect_external_signals(product_market_id)`
-- `compute_features(product_market_id, window, feature_version)`
-- `evaluate_eligibility(feature_snapshot_id, policy_version)`
-- `score_opportunity(feature_snapshot_id, formula_version)`
-- `build_ranking(campaign_id, ranking_policy_version)`
-- `generate_report(report_snapshot_id, template_version)`
-- `ingest_outcomes(product_id, period)`
-- `evaluate_calibration(model_version, cohort)`
-
-Representative events:
+## Fluxo executado no código atual
 
 ```text
-campaign.created
-query.generated
-raw_observation.captured
-listing.normalized
-listing.enriched
-cluster_run.completed
-feature_snapshot.created
-opportunity.excluded
-opportunity.scored
-ranking.completed
-editorial_review.completed
-report.published
-outcome.observed
-scoring_calibration.completed
+1. coleta de listings via crawler
+2. normalização para Product
+3. clustering por mercado
+4. cálculo de demand
+5. cálculo de competition
+6. cálculo de purchase_intent
+7. cálculo de build_ease
+8. cálculo de differentiation
+9. cálculo do opportunity_score
+10. avaliação de eligibility
+11. seleção do portfólio
+12. deep_research para shortlisted clusters
 ```
 
-Event envelopes include `event_id`, `event_type`, `schema_version`, `occurred_at`, `correlation_id`, `causation_id`, producer version, entity ID, and payload. Failed jobs use bounded retries with exponential backoff and a dead-letter/review queue. Backfills run under an explicit run ID and must not silently update published reports.
+## Persistência real
+
+A base relacional persiste os resultados de cada camada, permitindo auditoria do pipeline completo. O repository em `src/crawler/repositories/sqlalchemy_repository.py` tem tabelas para as análises e scores finais, bem como para os resultados de elegibilidade e seleção.
+
+Nenhuma camada de API ou job separado foi implementada para abstrair essa persistência.
+
+## Limites explícitos
+
+Este repositório não implementa ainda:
+
+- GraphQL/REST API
+- dashboard operatório
+- serviço de exportação de relatórios
+- filas ou workers
+- migrações em Alembic
+- publicação de snapshots para terceiros
+
+Esses itens continuam no plano arquitetural do projeto, não como funcionalidade atual.
+
+## Comandos reais do projeto
+
+```bash
+python -m crawler search "quebra de preço" --provider mock
+python -m crawler cluster --limit 500
+python -m market_intelligence demand calculate --limit 50
+python -m market_intelligence competition calculate --limit 50
+python -m market_intelligence purchase-intent calculate --limit 50
+python -m market_intelligence build-ease calculate --limit 50
+python -m market_intelligence differentiation calculate --limit 50
+python -m market_intelligence opportunity calculate --limit 50
+python -m market_intelligence eligibility evaluate --limit 50
+python -m market_intelligence selection run --limit 200
+python -m market_intelligence deep-research run --limit 25 --top 25
+```
+
+Essa é a superfície executável que o repositório entrega hoje.
 
 ## 9. Persistence
 
