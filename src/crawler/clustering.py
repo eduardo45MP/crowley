@@ -132,7 +132,7 @@ def _remove_noise(tokens: list[str]) -> list[str]:
     for token in tokens:
         if token in PROMOTIONAL_STOPWORDS:
             continue
-        if token in {"for", "and", "the", "with", "from", "your", "home", "custom", "shop", "online"}:
+        if token in {"for", "and", "the", "with", "from", "your", "home", "shop", "online"}:
             continue
         cleaned.append(token)
     return cleaned
@@ -247,7 +247,7 @@ def _infer_keywords(tokens: list[str]) -> list[str]:
             continue
         if len(token) <= 2:
             continue
-        if token in {"for", "and", "the", "with", "from", "your", "home", "custom", "shop", "online"}:
+        if token in {"for", "and", "the", "with", "from", "your", "home", "shop", "online"}:
             continue
         ranked.append((token, count))
 
@@ -308,7 +308,16 @@ class TfidfSimilarityEngine:
         right_norm = math.sqrt(sum(value * value for value in right.values()))
         if left_norm == 0.0 or right_norm == 0.0:
             return 0.0
-        return max(0.0, min(1.0, dot / (left_norm * right_norm)))
+        cosine = max(0.0, min(1.0, dot / (left_norm * right_norm)))
+        left_tokens = set(self._tokenize_document(build_clustering_text(a)))
+        right_tokens = set(self._tokenize_document(build_clustering_text(b)))
+        if left_tokens and right_tokens:
+            overlap = len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+        else:
+            overlap = 0.0
+        shared_niche = 1.0 if (a.niche and b.niche and a.niche.lower() == b.niche.lower()) else 0.0
+        shared_type = 1.0 if (a.product_type and b.product_type and a.product_type == b.product_type) else 0.0
+        return max(0.0, min(1.0, (0.55 * cosine) + (0.20 * overlap) + (0.25 * max(shared_niche, shared_type))))
 
     def _vector_for_product(self, product: Product) -> dict[str, float]:
         doc = build_clustering_text(product)
@@ -448,17 +457,25 @@ def _build_cluster_metadata(members: list[Product]) -> tuple[str | None, str | N
 def _make_cluster_name(members: list[Product]) -> str:
     niche, product_type, problem, _, _, _ = _build_cluster_metadata(members)
     product_label = _pluralize_product_type(product_type)
+    problem_label = _format_problem_label(problem)
     if niche and problem and product_type:
-        return f"{niche.title()} {problem.title()} {product_label}"
+        return f"{niche.title()} {problem_label} {product_label}"
     if niche and product_type:
         return f"{niche.title()} {product_label}"
     if niche and problem:
-        return f"{niche.title()} {problem.title()}"
+        return f"{niche.title()} {problem_label}"
     if product_type:
         return f"{product_label}"
     if members:
         return members[0].product_name.strip()
     return "Product Market"
+
+
+def _format_problem_label(problem: str | None) -> str:
+    if problem is None:
+        return ""
+    upper_map = {"roi": "ROI", "costing": "Costing", "budgeting": "Budgeting", "pricing": "Pricing"}
+    return upper_map.get(problem.lower(), problem.title())
 
 
 def _infer_cluster_membership_scores(cluster_members: list[Product], anchor: Product) -> list[float]:

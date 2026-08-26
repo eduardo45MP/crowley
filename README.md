@@ -31,7 +31,7 @@ O repositório ainda não inclui uma API HTTP, dashboard, jobs assíncronos, exp
 Requer Python 3.11+.
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env

@@ -106,7 +106,7 @@ class OpportunityScorer:
         weakest = self._weakest_dimension(available)
         fatal = self._fatal_weaknesses(available)
         status = "complete" if len(available) == len(ordered) else "provisional"
-        qualification = self._qualify(score, status, opportunity_confidence, dimension_coverage)
+        qualification = self._qualify(score, status, opportunity_confidence, dimension_coverage, fatal)
         ranking_eligible = (
             status in {"complete", "provisional"}
             and dimension_coverage >= self.config.minimum_dimension_coverage
@@ -212,9 +212,13 @@ class OpportunityScorer:
                 fatal.append(key)
         return fatal
 
-    def _qualify(self, score: float, status: str, confidence: float | None, coverage: float) -> str | None:
+    def _qualify(self, score: float, status: str, confidence: float | None, coverage: float, fatal: list[str] | None = None) -> str | None:
         if status == "insufficient_data":
             return "insufficient_data"
+        if fatal:
+            if score < 70:
+                return "weak"
+            return "speculative"
         if score >= 90 and confidence is not None and confidence >= 0.7 and coverage >= 0.9:
             return "exceptional"
         if score >= 80:

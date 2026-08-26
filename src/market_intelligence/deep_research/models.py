@@ -11,6 +11,7 @@ class ResearchEvidence:
     product_id: int | None = None
     marketplace: str | None = None
     source_url: str | None = None
+    source_field: str | None = None
     raw_value: str | float | int | None = None
     observed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     confidence: float | None = None
@@ -159,6 +160,8 @@ class DeepResearchDossier:
     confirmations: list[str] = field(default_factory=list)
     contradictions: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    research_findings: list[str] = field(default_factory=list)
+    confidence_adjustment_recommendation: str | None = None
     research_coverage: float = 0.0
     research_confidence: float = 0.0
     status: str = "pending"
@@ -186,6 +189,8 @@ class DeepResearchDossier:
             "confirmations": list(self.confirmations),
             "contradictions": list(self.contradictions),
             "warnings": list(self.warnings),
+            "research_findings": list(self.research_findings),
+            "confidence_adjustment_recommendation": self.confidence_adjustment_recommendation,
             "research_coverage": self.research_coverage,
             "research_confidence": self.research_confidence,
             "status": self.status,

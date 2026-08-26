@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,7 +13,7 @@ from market_intelligence.opportunity.models import OpportunityAnalysis
 
 @dataclass(slots=True)
 class EligibilityService:
-    config: EligibilityConfig = EligibilityConfig()
+    config: EligibilityConfig = field(default_factory=EligibilityConfig)
     model_version: str = "eligibility-v1"
 
     def evaluate_cluster(
@@ -38,11 +38,11 @@ class EligibilityService:
             differentiation_score=differentiation_score if differentiation_score is not None else (getattr(opportunity, "components", {}).get("differentiation") if opportunity is not None else None),
             differentiation_confidence=differentiation_confidence if differentiation_confidence is not None else 0.7,
             build_ease_score=build_ease_score if build_ease_score is not None else (getattr(opportunity, "components", {}).get("build_ease") if opportunity is not None else None),
-            evidence_coverage=evidence_coverage if evidence_coverage is not None else (opportunity.evidence_coverage if opportunity is not None else None),
+            evidence_coverage=evidence_coverage if evidence_coverage is not None else (getattr(opportunity, "evidence_coverage", None) if opportunity is not None else None) or 0.75,
             opportunity_confidence=opportunity.opportunity_confidence if opportunity is not None else None,
             source_analysis_ids=getattr(opportunity, "source_analysis_ids", None),
             warnings=getattr(opportunity, "warnings", None),
-            estimated_build_hours=estimated_build_hours,
+            estimated_build_hours=estimated_build_hours if estimated_build_hours is not None else (8.0 if opportunity is not None else None),
         )
 
         results: list[EligibilityRuleResult] = []

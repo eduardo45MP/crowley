@@ -29,7 +29,7 @@ class DifferentiationScorer:
 
         weighted_total = sum(value * weights.get(key, 0.0) for key, value in components.items())
         total_weight = sum(weights.get(key, 0.0) for key in components)
-        score_value = max(0.0, min(100.0, (weighted_total / total_weight) * 100.0))
+        score_value = max(0.0, min(100.0, weighted_total / total_weight if total_weight else 0.0))
 
         coverage = min(1.0, len(available) / len(components))
         confidence = min(1.0, coverage * 0.7 + 0.3)

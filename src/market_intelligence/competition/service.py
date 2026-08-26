@@ -5,10 +5,17 @@ from datetime import datetime, timezone
 from typing import Any
 
 from crawler.clustering import ProductCluster
+from crawler.repositories import sqlalchemy_repository as repo_module
 from crawler.repositories.sqlalchemy_repository import SqlAlchemyProductRepository
 from market_intelligence.competition.models import ClusterCompetitionScore, CompetitionAnalysisRun, CompetitionFeatures
 from market_intelligence.competition.scoring import CompetitionScorer
 from market_intelligence.competition.features import CompetitionFeatureExtractor
+
+
+def _default_competition_repository() -> SqlAlchemyProductRepository:
+    if repo_module.DEFAULT_SQLITE_REPOSITORY is not None:
+        return repo_module.DEFAULT_SQLITE_REPOSITORY
+    return SqlAlchemyProductRepository("sqlite+pysqlite:///:memory:")
 
 
 @dataclass(slots=True)
@@ -19,7 +26,7 @@ class CompetitionAnalysisResult:
 
 class CompetitionAnalysisService:
     def __init__(self, repository: SqlAlchemyProductRepository | None = None, model_version: str = "competition-v1") -> None:
-        self.repository = repository
+        self.repository = repository or _default_competition_repository()
         self.model_version = model_version
         self.extractor = CompetitionFeatureExtractor()
         self.scorer = CompetitionScorer()
@@ -51,7 +58,20 @@ class CompetitionAnalysisService:
             warnings=warnings,
         )
         if self.repository is not None:
-            result.run_id = None
+            run = self.repository.save_competition_run(
+                CompetitionAnalysisRun(
+                    model_version=self.model_version,
+                    configuration={"algorithm": "deterministic_competition_score", "version": self.model_version},
+                    cluster_count=1,
+                    started_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(timezone.utc),
+                )
+            )
+            result.run_id = run.id
+            self.repository.save_cluster_competition_score(result)
+        else:
+            result.id = int(datetime.now(timezone.utc).timestamp() * 1_000_000) % 1_000_000_000
+            result.run_id = result.id
         return result
 
     def analyze(self, clusters: list[ProductCluster]) -> CompetitionAnalysisResult:

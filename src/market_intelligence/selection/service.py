@@ -147,8 +147,13 @@ class PortfolioSelector:
         problem_counts: dict[str, int] = defaultdict(int)
 
         for group, quota in effective_policy.buyer_group_quotas.items():
+            if len(selected) >= effective_policy.target_size:
+                break
             group_candidates = [candidate for candidate in ranked if self._normalize_group(candidate) == group]
-            for _ in range(quota["minimum"]):
+            minimum_slots = min(quota["minimum"], max(0, effective_policy.target_size - len(selected)))
+            for _ in range(minimum_slots):
+                if len(selected) >= effective_policy.target_size:
+                    break
                 chosen = None
                 chosen_score = float("-inf")
                 for candidate in group_candidates:

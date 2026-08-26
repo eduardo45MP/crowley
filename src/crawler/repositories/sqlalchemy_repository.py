@@ -80,11 +80,18 @@ class ClusterRunRecord(Base):
 
 class ProductClusterRecord(Base):
     __tablename__ = "product_clusters"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "slug",
+            name="uq_product_clusters_run_slug",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    run_id: Mapped[int | None] = mapped_column(ForeignKey("cluster_runs.id"), index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("cluster_runs.id"),index=True,)
     name: Mapped[str] = mapped_column(String(255), index=True)
-    slug: Mapped[str] = mapped_column(String(255), index=True, unique=True)
+    slug: Mapped[str] = mapped_column(String(255), index=True,)
     niche: Mapped[str | None] = mapped_column(String(255))
     product_type: Mapped[str | None] = mapped_column(String(64))
     primary_problem: Mapped[str | None] = mapped_column(String(255))
@@ -338,12 +345,185 @@ class SelectedOpportunityRecord(Base):
     selected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
+class Top10SelectionRunRecord(Base):
+    __tablename__ = "top10_selection_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deep_research_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    model_version: Mapped[str] = mapped_column(String(64), index=True)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    candidate_count: Mapped[int] = mapped_column(Integer, default=0)
+    selected_count: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class Top10OpportunityRecord(Base):
+    __tablename__ = "top10_opportunities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("top10_selection_runs.id"), index=True)
+    cluster_id: Mapped[int | None] = mapped_column(ForeignKey("product_clusters.id"), index=True, nullable=True)
+    cluster_name: Mapped[str | None] = mapped_column(String(255), index=True)
+    top10_rank: Mapped[int] = mapped_column(Integer, default=0)
+    opportunity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    top10_selection_utility: Mapped[float | None] = mapped_column(Float, nullable=True)
+    deep_research_verdict: Mapped[str] = mapped_column(String(32), index=True, default="mixed")
+    research_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selection_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    selected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class OpportunityThesisRecord(Base):
+    __tablename__ = "opportunity_theses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cluster_id: Mapped[int | None] = mapped_column(ForeignKey("product_clusters.id"), index=True, nullable=True)
+    target_buyer: Mapped[str] = mapped_column(String(255), default="unknown")
+    problem: Mapped[str] = mapped_column(Text, default="unknown")
+    market_evidence: Mapped[list[str]] = mapped_column(JSON, default=list)
+    buyer_evidence: Mapped[list[str]] = mapped_column(JSON, default=list)
+    competitor_weaknesses: Mapped[list[str]] = mapped_column(JSON, default=list)
+    critical_gaps: Mapped[list[str]] = mapped_column(JSON, default=list)
+    proposed_advantage: Mapped[list[str]] = mapped_column(JSON, default=list)
+    opportunity_statement: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_refs: Mapped[list[str]] = mapped_column(JSON, default=list)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class ProductBlueprintRecord(Base):
+    __tablename__ = "product_blueprints"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cluster_id: Mapped[int | None] = mapped_column(ForeignKey("product_clusters.id"), index=True, nullable=True)
+    product_name: Mapped[str] = mapped_column(String(255), index=True)
+    product_type: Mapped[str] = mapped_column(String(64), default="calculator")
+    target_buyer: Mapped[str] = mapped_column(String(255), default="unknown")
+    primary_problem: Mapped[str] = mapped_column(Text, default="unknown")
+    value_proposition: Mapped[str] = mapped_column(Text, default="")
+    sheets: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    formulas: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    inputs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    outputs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    dashboards: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    workflows: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    core_features: Mapped[list[str]] = mapped_column(JSON, default=list)
+    differentiation_features: Mapped[list[str]] = mapped_column(JSON, default=list)
+    optional_features: Mapped[list[str]] = mapped_column(JSON, default=list)
+    mvp_features: Mapped[list[str]] = mapped_column(JSON, default=list)
+    post_mvp_features: Mapped[list[str]] = mapped_column(JSON, default=list)
+    configuration_options: Mapped[list[str]] = mapped_column(JSON, default=list)
+    documentation_requirements: Mapped[list[str]] = mapped_column(JSON, default=list)
+    scope_level: Mapped[str] = mapped_column(String(32), default="small")
+    build_complexity: Mapped[str] = mapped_column(String(32), default="medium")
+    estimated_build_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evidence_refs: Mapped[list[str]] = mapped_column(JSON, default=list)
+    blueprint_confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(32), default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class DeepResearchRunRecord(Base):
+    __tablename__ = "deep_research_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    selection_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    model_version: Mapped[str] = mapped_column(String(64), index=True)
+    target_count: Mapped[int] = mapped_column(Integer, default=25)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class DeepResearchDossierRecord(Base):
+    __tablename__ = "deep_research_dossiers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("deep_research_runs.id"), index=True)
+    cluster_id: Mapped[int | None] = mapped_column(ForeignKey("product_clusters.id"), index=True)
+    cluster_name: Mapped[str | None] = mapped_column(String(255), index=True)
+    research_rank: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(32), index=True, default="pending")
+    competitor_count_analyzed: Mapped[int] = mapped_column(Integer, default=0)
+    research_coverage: Mapped[float] = mapped_column(Float, default=0.0)
+    research_confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    pricing_analysis: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    competitor_profiles: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    feature_matrix: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    review_analysis: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    keyword_analysis: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    product_structure_analysis: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    screenshots: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    market_patterns: Mapped[list[str]] = mapped_column(JSON, default=list)
+    observed_gaps: Mapped[list[str]] = mapped_column(JSON, default=list)
+    differentiation_axes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    confirmations: Mapped[list[str]] = mapped_column(JSON, default=list)
+    contradictions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    research_findings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    confidence_adjustment_recommendation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_version: Mapped[str] = mapped_column(String(64), index=True, default="deep-research-v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class ResearchCompetitorProfileRecord(Base):
+    __tablename__ = "research_competitor_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dossier_id: Mapped[int | None] = mapped_column(ForeignKey("deep_research_dossiers.id"), index=True)
+    competitor_id: Mapped[str] = mapped_column(String(255), index=True)
+    product_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    product_name: Mapped[str | None] = mapped_column(String(255), index=True)
+    seller: Mapped[str | None] = mapped_column(Text)
+    marketplace: Mapped[str | None] = mapped_column(String(64), index=True)
+    url: Mapped[str | None] = mapped_column(Text)
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(8))
+    rating: Mapped[float | None] = mapped_column(Float)
+    review_count: Mapped[int | None] = mapped_column(Integer)
+    keywords: Mapped[list[str]] = mapped_column(JSON, default=list)
+    description: Mapped[str | None] = mapped_column(Text)
+    image_urls: Mapped[list[str]] = mapped_column(JSON, default=list)
+    screenshot_paths: Mapped[list[str]] = mapped_column(JSON, default=list)
+    detected_features: Mapped[list[str]] = mapped_column(JSON, default=list)
+    positioning: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    strengths: Mapped[list[str]] = mapped_column(JSON, default=list)
+    weaknesses: Mapped[list[str]] = mapped_column(JSON, default=list)
+    review_summary: Mapped[str | None] = mapped_column(Text)
+    complaint_themes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    research_notes: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+
+class ResearchEvidenceRecord(Base):
+    __tablename__ = "research_evidence"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dossier_id: Mapped[int | None] = mapped_column(ForeignKey("deep_research_dossiers.id"), index=True)
+    evidence_type: Mapped[str] = mapped_column(String(64), index=True)
+    product_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    marketplace: Mapped[str | None] = mapped_column(String(64), index=True)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    source_field: Mapped[str | None] = mapped_column(String(128), index=True)
+    raw_value: Mapped[str | float | int | None] = mapped_column(Text, nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+DEFAULT_SQLITE_REPOSITORY: "SqlAlchemyProductRepository | None" = None
+
+
 class SqlAlchemyProductRepository(ProductRepository, ClusterRepository):
     def __init__(self, database_url: str) -> None:
+        global DEFAULT_SQLITE_REPOSITORY
         self.database_url = database_url
         self._ensure_sqlite_parent(database_url)
         self.engine = create_engine(database_url)
         self._sessions = sessionmaker(self.engine, expire_on_commit=False)
+        if database_url.startswith("sqlite"):
+            DEFAULT_SQLITE_REPOSITORY = self
 
     @staticmethod
     def _ensure_sqlite_parent(database_url: str) -> None:
@@ -496,6 +676,8 @@ class SqlAlchemyProductRepository(ProductRepository, ClusterRepository):
                 session.add(record)
                 session.flush()
                 cluster.id = record.id
+                for membership in cluster.memberships:
+                    membership.cluster_id = record.id
             return cluster
         except SQLAlchemyError as exc:
             logger.exception("database error while saving cluster=%s", cluster.name)
@@ -507,7 +689,10 @@ class SqlAlchemyProductRepository(ProductRepository, ClusterRepository):
             with self._sessions.begin() as session:
                 product = session.scalar(select(ProductRecord).where(ProductRecord.identity_key == _identity_key(membership.product)))
                 if product is None:
-                    raise RepositoryError("Produto canônico não encontrado para associação de cluster.")
+                    result = self.upsert_product(membership.product)
+                    product = session.scalar(select(ProductRecord).where(ProductRecord.identity_key == _identity_key(membership.product)))
+                    if product is None:
+                        raise RepositoryError("Produto canônico não encontrado para associação de cluster.")
                 record = ProductClusterMembershipRecord(
                     cluster_id=membership.cluster_id,
                     product_id=product.id,
@@ -1064,6 +1249,122 @@ class SqlAlchemyProductRepository(ProductRepository, ClusterRepository):
         except SQLAlchemyError as exc:
             logger.exception("database error while loading latest differentiation score cluster_id=%s", cluster_id)
             raise RepositoryError("Não foi possível consultar o score de diferenciação.") from exc
+
+    def save_deep_research_run(self, run: Any) -> Any:
+        now = datetime.now(timezone.utc)
+        try:
+            with self._sessions.begin() as session:
+                record = DeepResearchRunRecord(
+                    selection_run_id=run.selection_run_id,
+                    model_version=run.model_version,
+                    target_count=run.target_count,
+                    started_at=run.started_at or now,
+                    completed_at=run.completed_at,
+                )
+                session.add(record)
+                session.flush()
+                run.id = record.id
+            return run
+        except SQLAlchemyError as exc:
+            logger.exception("database error while saving deep research run")
+            raise RepositoryError("Não foi possível persistir o run de deep research.") from exc
+
+    def save_deep_research_dossier(self, dossier: Any) -> Any:
+        now = datetime.now(timezone.utc)
+        try:
+            with self._sessions.begin() as session:
+                record = DeepResearchDossierRecord(
+                    run_id=getattr(dossier, "run_id", None),
+                    cluster_id=dossier.cluster_id,
+                    cluster_name=dossier.cluster_name,
+                    research_rank=dossier.research_rank,
+                    status=dossier.status,
+                    competitor_count_analyzed=dossier.competitor_count_analyzed,
+                    research_coverage=dossier.research_coverage,
+                    research_confidence=dossier.research_confidence,
+                    pricing_analysis=dossier.pricing_analysis,
+                    competitor_profiles=[profile.as_dict() for profile in dossier.competitor_profiles],
+                    feature_matrix=dossier.feature_matrix,
+                    review_analysis=dossier.review_analysis,
+                    keyword_analysis=dossier.keyword_analysis,
+                    product_structure_analysis=dossier.product_structure_analysis,
+                    screenshots=dossier.screenshots,
+                    market_patterns=dossier.market_patterns,
+                    observed_gaps=dossier.observed_gaps,
+                    differentiation_axes=dossier.differentiation_axes,
+                    confirmations=dossier.confirmations,
+                    contradictions=dossier.contradictions,
+                    warnings=dossier.warnings,
+                    research_findings=dossier.research_findings,
+                    confidence_adjustment_recommendation=dossier.confidence_adjustment_recommendation,
+                    model_version=dossier.model_version,
+                    created_at=dossier.created_at or now,
+                    completed_at=dossier.completed_at or now,
+                )
+                session.add(record)
+                session.flush()
+                dossier.id = record.id
+            return dossier
+        except SQLAlchemyError as exc:
+            logger.exception("database error while saving deep research dossier cluster_id=%s", dossier.cluster_id)
+            raise RepositoryError("Não foi possível persistir o dossier de deep research.") from exc
+
+    def save_competitor_profile(self, profile: Any, run_id: int | None = None) -> Any:
+        try:
+            with self._sessions.begin() as session:
+                record = ResearchCompetitorProfileRecord(
+                    dossier_id=getattr(profile, "dossier_id", None),
+                    competitor_id=profile.competitor_id,
+                    product_id=profile.product_id,
+                    product_name=profile.product_name,
+                    seller=profile.seller,
+                    marketplace=profile.marketplace,
+                    url=profile.url,
+                    price=profile.price,
+                    currency=profile.currency,
+                    rating=profile.rating,
+                    review_count=profile.review_count,
+                    keywords=list(profile.keywords),
+                    description=profile.description,
+                    image_urls=list(profile.image_urls),
+                    screenshot_paths=list(profile.screenshot_paths),
+                    detected_features=list(profile.detected_features),
+                    positioning=dict(profile.positioning),
+                    strengths=list(profile.strengths),
+                    weaknesses=list(profile.weaknesses),
+                    review_summary=profile.review_summary,
+                    complaint_themes=list(profile.complaint_themes),
+                    research_notes=list(profile.research_notes),
+                )
+                session.add(record)
+                session.flush()
+                profile.id = record.id
+            return profile
+        except SQLAlchemyError as exc:
+            logger.exception("database error while saving competitor profile")
+            raise RepositoryError("Não foi possível persistir o perfil de concorrente.") from exc
+
+    def save_evidence(self, evidence: Any, dossier_id: int | None = None) -> Any:
+        try:
+            with self._sessions.begin() as session:
+                record = ResearchEvidenceRecord(
+                    dossier_id=dossier_id,
+                    evidence_type=evidence.evidence_type,
+                    product_id=evidence.product_id,
+                    marketplace=evidence.marketplace,
+                    source_url=evidence.source_url,
+                    source_field=evidence.source_field,
+                    raw_value=evidence.raw_value,
+                    observed_at=evidence.observed_at,
+                    confidence=evidence.confidence,
+                )
+                session.add(record)
+                session.flush()
+                evidence.id = record.id
+            return evidence
+        except SQLAlchemyError as exc:
+            logger.exception("database error while saving research evidence")
+            raise RepositoryError("Não foi possível persistir a evidência de research.") from exc
 
     def _one(self, statement: Any) -> Product | None:
         try:

@@ -5,7 +5,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from crawler.clustering import ProductCluster
+from crawler.repositories import sqlalchemy_repository as repo_module
 from crawler.repositories.sqlalchemy_repository import SqlAlchemyProductRepository
+
+
+def _default_demand_repository() -> SqlAlchemyProductRepository:
+    if repo_module.DEFAULT_SQLITE_REPOSITORY is not None:
+        return repo_module.DEFAULT_SQLITE_REPOSITORY
+    return SqlAlchemyProductRepository("sqlite+pysqlite:///:memory:")
 from market_intelligence.demand.models import ClusterDemandScore, DemandAnalysisRun
 from market_intelligence.demand.scoring import DemandScorer
 
@@ -18,13 +25,13 @@ class DemandCalculationResult:
 
 class DemandScoringService:
     def __init__(self, repository: SqlAlchemyProductRepository | None = None, model_version: str = "v1") -> None:
-        self.repository = repository
+        self.repository = repository or _default_demand_repository()
         self.model_version = model_version
         self.scorer = DemandScorer()
 
     def score_cluster(self, cluster: ProductCluster) -> ClusterDemandScore:
         score, confidence, coverage, features, components = self.scorer.score(cluster)
-        return ClusterDemandScore.from_features(
+        result = ClusterDemandScore.from_features(
             cluster_id=cluster.id,
             features=self._as_features(features),
             run_id=None,
@@ -34,6 +41,9 @@ class DemandScoringService:
             evidence_coverage=coverage,
             components=components,
         )
+        if self.repository is None:
+            result.id = int(datetime.now(timezone.utc).timestamp() * 1_000_000) % 1_000_000_000
+        return result
 
     def calculate(self, clusters: list[ProductCluster]) -> DemandCalculationResult:
         started_at = datetime.now(timezone.utc)
@@ -50,6 +60,8 @@ class DemandScoringService:
         )
         if self.repository is not None:
             self.repository.save_demand_run(run)
+        else:
+            run.id = int(started_at.timestamp() * 1_000_000) % 1_000_000_000
 
         scores: list[ClusterDemandScore] = []
         for cluster in clusters:

@@ -43,13 +43,11 @@ class ClusterDemandScore:
     id: int | None = None
 
     @classmethod
-    def from_features(cls, *, cluster_id: int | None, features: DemandFeatures, run_id: int | None, model_version: str, score: float, confidence: float, evidence_coverage: float, components: dict[str, Any]) -> "ClusterDemandScore":
-        return cls(
-            cluster_id=cluster_id,
-            demand_score=score,
-            confidence=confidence,
-            evidence_coverage=evidence_coverage,
-            features={
+    def from_features(cls, *, cluster_id: int | None, features: DemandFeatures | dict[str, Any], run_id: int | None, model_version: str, score: float, confidence: float, evidence_coverage: float, components: dict[str, Any]) -> "ClusterDemandScore":
+        if isinstance(features, dict):
+            feature_payload = features
+        else:
+            feature_payload = {
                 "keywords": features.keywords,
                 "signals": features.signals,
                 "primary_problem": features.primary_problem,
@@ -59,7 +57,13 @@ class ClusterDemandScore:
                 "cluster_size": features.cluster_size,
                 "confidence": features.confidence,
                 "signal_density": features.signal_density,
-            },
+            }
+        return cls(
+            cluster_id=cluster_id,
+            demand_score=score,
+            confidence=confidence,
+            evidence_coverage=evidence_coverage,
+            features=feature_payload,
             components=components,
             model_version=model_version,
             calculated_at=datetime.now(timezone.utc),

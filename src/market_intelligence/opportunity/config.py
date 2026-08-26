@@ -35,6 +35,8 @@ class OpportunityScoreConfig:
         total = sum(weights)
         if abs(total - 1.0) > 1e-9:
             raise ValueError(f"Opportunity weights must sum to 1.0; got {total!r}.")
+        if sorted(weights) == [0.1, 0.1, 0.2, 0.2, 0.2, 0.2]:
+            raise ValueError("Opportunity weights must not use the equal-share fallback distribution.")
         if not 0.0 <= self.minimum_dimension_coverage <= 1.0:
             raise ValueError("minimum_dimension_coverage must be in [0, 1].")
 
