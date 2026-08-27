@@ -1,165 +1,64 @@
 # Pipeline do Crowley
 
-## Visão geral
-
-O pipeline atual do Crowley segue uma sequência linear e auditável, com cada etapa gerando um artefato persistido e cada etapa seguinte consumindo apenas o que foi produzido antes.
+## Sequência executável
 
 ```text
-crawler
-  -> raw collection
-  -> normalization
-  -> clustering
-  -> market intelligence
-      -> demand
-      -> competition
-      -> purchase_intent
-      -> build_ease
-      -> differentiation
-      -> opportunity_score
-      -> eligibility
-      -> selection
-      -> deep_research
+Crawler -> Normalization -> Clustering -> Market Intelligence
+-> Opportunity -> Eligibility -> Selection -> Deep Research
+-> Top10 -> Opportunity Thesis -> Product Blueprint
+-> Editorial Snapshot -> Reporting
 ```
 
-Este fluxo reflete o que está implementado no código e no repositório de persistência.
+Cada seta representa consumo de um artefato anterior e criação de um novo artefato.
 
-## 1. Coleta
+## 1. Crawler e Normalization
 
-A entrada do pipeline é a camada de crawler. Ela usa `MarketplaceProvider` e `ProductNormalizer` para captar listings, extrair campos e persistir os dados brutos.
+Providers produzem `RawMarketplaceProduct`; normalizers produzem `Product`. O raw payload e o timestamp de observação são preservados. O provider `mock` permite execução offline determinística.
 
-Artefatos:
+## 2. Clustering
 
-- `raw_marketplace_products`
-- `products`
-- `Product` canonizado
+Produtos canônicos são agrupados em `ProductCluster`, com memberships, nicho, problema, tipo e termos canônicos. Ao recarregar um cluster, o repository também recarrega seus membros para que análises posteriores usem evidência real.
 
-A coleta preserva o payload bruto e nunca sobrescreve o histórico de observações.
+## 3. Market Intelligence
 
-## 2. Normalização
+Demand, Competition, Purchase Intent, Build Ease e Differentiation são independentes e versionados. Cada execução persiste um run e scores por cluster.
 
-A normalização converte dados de fontes específicas para um mesmo domínio canônico.
+## 4. Opportunity
 
-Funções principais:
+Agrega dimensões já calculadas, registra componentes, coverage, confidence, source analysis IDs e source model versions. Price Potential continua opcional; sua ausência torna o score provisional conforme a política existente.
 
-- padronização de moeda e preço
-- limpeza de texto e keywords
-- normalização de URL, seller, categoria, review/rating
-- geração de identidade canônica do produto
+## 5. Eligibility
 
-A normalização é determinística e separada do provider.
+Aplica gates de risco, cobertura, demanda, diferenciação e escopo. Produz `eligible`, `review_required`, `ineligible` ou `insufficient_data` sem alterar o score.
 
-## 3. Clustering
+## 6. Selection
 
-O clustering agrega produtos canônicos em mercados de produto. Ele usa termos de nicho, problema e product type para construir clusters com `slug`, `confidence`, `keywords`, `product_count` e membros.
+Monta o portfólio com quotas de buyer group e diversidade por nicho/problema. Persiste `SelectionRun` e `SelectedOpportunity`. O `selection_rank` é a ordem editorial Top 100.
 
-Artefatos:
+## 7. Deep Research
 
-- `cluster_runs`
-- `product_clusters`
-- `product_cluster_memberships`
+Analisa pricing, concorrentes, keywords, reviews, estruturas e gaps dos selecionados. Persiste runs e dossiers. Confirmações ou contradições não reescrevem Opportunity Score.
 
-## 4. Market intelligence por dimensão
+## 8. Top10, Thesis e Blueprint
 
-Cada análise de dimensão é uma etapa independente e persistida.
+Top10Selector usa Opportunity Score, qualidade da evidência, clareza e contradições para uma decisão separada. Opportunity Thesis estrutura comprador, problema, evidência e vantagem. Product Blueprint define escopo, features e `estimated_build_hours`.
 
-### 4.1 Demand
+## 9. Editorial Snapshot
 
-Calcula um score da demanda a partir do sinal do cluster. Persiste `cluster_demand_scores` e `demand_analysis_runs`.
+`EditorialReportService` carrega Selection como fonte primária, limita em até 100 e acrescenta dados disponíveis. Não fabrica candidatos. Keywords vêm somente de análise do dossier, termos do cluster e keywords observadas em concorrentes.
 
-### 4.2 Competition
+## 10. Reporting
 
-Analisa o ambiente competitivo e calcula um score favorável à oportunidade, não uma quantidade absoluta de competição. Persistido em `cluster_competition_scores`.
+O snapshot gera `report.json`, `opportunities.csv`, `crowley-opportunities.xlsx` e `crowley-report.pdf`. O JSON contém `metadata`, `methodology`, `summary`, `top10`, `ranking` e `provenance`.
 
-### 4.3 Purchase intent
+## Execução offline completa
 
-Captura probabilidade de compra e valor percebido. Persistido em `cluster_purchase_intent_scores`.
+```bash
+python -m market_intelligence pipeline demo --output-dir data/reports
+```
 
-### 4.4 Build ease
+Para dados persistidos reais, execute os comandos sequenciais documentados no README e finalize com:
 
-Anota a dificuldade de construir o produto. Persistido em `cluster_build_ease_scores`.
-
-### 4.5 Differentiation
-
-Avalia lacunas, diferenciação, uyx e oportunidades de posicionamento. Persistido em `cluster_differentiation_scores`.
-
-## 5. Opportunity score
-
-A camada de `opportunity` consolida resultados das dimensões independentes em um único score de 0 a 100.
-
-Ela calcula:
-
-- `opportunity_score`
-- `opportunity_confidence`
-- `dimension_coverage`
-- `evidence_coverage`
-- `strongest_dimension`
-- `weakest_dimension`
-- `fatal_weaknesses`
-- `ranking_eligible`
-
-A regra de composição é definida em configuração e registrada em `opportunity_analysis_runs` e `cluster_opportunity_scores`.
-
-## 6. Eligibility
-
-Eligibility responde se a oportunidade deve prosseguir para ranking ou produção. Ele usa `EligibilityContext` e regras separadas.
-
-Resultados:
-
-- `eligible`
-- `review_required`
-- `ineligible`
-- `insufficient_data`
-
-Persistência:
-
-- `eligibility_evaluation_runs`
-- `cluster_eligibility_results`
-
-## 7. Selection
-
-Selection usa o conjunto de oportunidades elegíveis para montar um portfólio final com diversificação, quotas por buyer group e limites por nicho ou problema.
-
-Persistência:
-
-- `selection_runs`
-- `selected_opportunities`
-
-## 8. Deep Research
-
-Deep research atua sobre o portfólio selecionado e produz dossiers mais detalhados, sem alterar o score original.
-
-O output inclui:
-
-- pricing analysis
-- competitor profiles
-- keyword analysis
-- product structure analysis
-- market patterns
-- confirmations and contradictions
-- research coverage/confidence
-
-Persistência:
-
-- `deep_research_runs`
-- `deep_research_dossiers`
-
-## 9. Regra de separação
-
-Uma regra importante do projeto é a seguinte:
-
-- deep research não inventa fatos novos que alterem o Opportunity Score
-- eligibility não reescreve a dimensão original
-- selection não é um sort simples
-- cada etapa cria um resultado adicional, em vez de substituir a etapa anterior
-
-## 10. Limites do pipeline atual
-
-O código executável hoje não inclui:
-
-- API para servir dados
-- dashboard para revisão humana
-- execução de jobs em background
-- exportação adequada de relatórios
-- LLM ou evidência externa não estruturada
-
-O que existe é um pipeline determinístico, rastreável e orientado a evidência para pesquisa local de oportunidades digitais.
+```bash
+python -m market_intelligence report build --selection-run <id> --top 100 --top10 10
+```

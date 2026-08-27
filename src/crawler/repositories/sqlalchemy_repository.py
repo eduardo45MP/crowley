@@ -711,7 +711,10 @@ class SqlAlchemyProductRepository(ProductRepository, ClusterRepository):
         try:
             with self._sessions() as session:
                 records = session.scalars(select(ProductClusterRecord).order_by(ProductClusterRecord.product_count.desc(), ProductClusterRecord.created_at.desc()).limit(limit)).all()
-                return [_to_cluster(record) for record in records]
+                clusters = [_to_cluster(record) for record in records]
+            for cluster in clusters:
+                cluster.members = self.list_cluster_members(cluster.id) if cluster.id is not None else []
+            return clusters
         except SQLAlchemyError as exc:
             logger.exception("database error while listing clusters")
             raise RepositoryError("Não foi possível consultar os clusters.") from exc
@@ -720,7 +723,10 @@ class SqlAlchemyProductRepository(ProductRepository, ClusterRepository):
         try:
             with self._sessions() as session:
                 record = session.get(ProductClusterRecord, cluster_id)
-                return _to_cluster(record) if record else None
+                cluster = _to_cluster(record) if record else None
+            if cluster is not None:
+                cluster.members = self.list_cluster_members(cluster_id)
+            return cluster
         except SQLAlchemyError as exc:
             logger.exception("database error while retrieving cluster")
             raise RepositoryError("Não foi possível consultar o cluster.") from exc
@@ -1250,6 +1256,113 @@ class SqlAlchemyProductRepository(ProductRepository, ClusterRepository):
             logger.exception("database error while loading latest differentiation score cluster_id=%s", cluster_id)
             raise RepositoryError("Não foi possível consultar o score de diferenciação.") from exc
 
+    def save_selection_run(self, run: Any) -> Any:
+        now = datetime.now(timezone.utc)
+        try:
+            with self._sessions.begin() as session:
+                record = SelectionRunRecord(
+                    model_version=run.model_version,
+                    configuration=run.configuration,
+                    candidate_count=run.candidate_count,
+                    eligible_count=run.eligible_count,
+                    selected_count=run.selected_count,
+                    started_at=run.started_at or now,
+                    completed_at=run.completed_at or now,
+                )
+                session.add(record)
+                session.flush()
+                run.id = record.id
+            return run
+        except SQLAlchemyError as exc:
+            logger.exception("database error while saving selection run")
+            raise RepositoryError("Não foi possível persistir a execução de Selection.") from exc
+
+    def save_selected_opportunity(self, item: Any, run_id: int) -> Any:
+        try:
+            with self._sessions.begin() as session:
+                record = SelectedOpportunityRecord(
+                    run_id=run_id,
+                    cluster_id=item.cluster_id,
+                    cluster_name=item.cluster_name,
+                    buyer_group=item.buyer_group,
+                    quota_bucket=item.quota_bucket,
+                    niche=item.niche,
+                    problem_type=item.problem_type,
+                    product_type=item.product_type,
+                    opportunity_score=item.opportunity_score,
+                    opportunity_confidence=item.opportunity_confidence,
+                    evidence_coverage=item.evidence_coverage,
+                    selection_rank=item.selection_rank,
+                    selection_utility=item.selection_utility,
+                    selection_reasons=list(item.selection_reasons),
+                    selected_at=item.selected_at,
+                )
+                session.add(record)
+                session.flush()
+                item.id = record.id
+            return item
+        except (SQLAlchemyError, AttributeError) as exc:
+            logger.exception("database error while saving selected opportunity")
+            raise RepositoryError("Não foi possível persistir uma oportunidade selecionada.") from exc
+
+    def latest_selection_run(self) -> dict[str, Any] | None:
+        return self.get_selection_run(None)
+
+    def get_selection_run(self, run_id: int | None) -> dict[str, Any] | None:
+        try:
+            with self._sessions() as session:
+                statement = select(SelectionRunRecord)
+                if run_id is not None:
+                    statement = statement.where(SelectionRunRecord.id == run_id)
+                else:
+                    statement = statement.order_by(SelectionRunRecord.id.desc())
+                record = session.scalar(statement)
+                if record is None:
+                    return None
+                return {
+                    "id": record.id,
+                    "model_version": record.model_version,
+                    "configuration": record.configuration,
+                    "candidate_count": record.candidate_count,
+                    "eligible_count": record.eligible_count,
+                    "selected_count": record.selected_count,
+                    "started_at": _aware(record.started_at),
+                    "completed_at": _aware(record.completed_at),
+                }
+        except SQLAlchemyError as exc:
+            raise RepositoryError("Não foi possível consultar a execução de Selection.") from exc
+
+    def list_selected_opportunities(self, run_id: int, limit: int = 100) -> list[dict[str, Any]]:
+        try:
+            with self._sessions() as session:
+                records = session.scalars(
+                    select(SelectedOpportunityRecord)
+                    .where(SelectedOpportunityRecord.run_id == run_id)
+                    .order_by(SelectedOpportunityRecord.selection_rank.asc())
+                    .limit(limit)
+                ).all()
+                return [{
+                    "id": record.id,
+                    "run_id": record.run_id,
+                    "cluster_id": record.cluster_id,
+                    "cluster_name": record.cluster_name,
+                    "buyer_group": record.buyer_group,
+                    "quota_bucket": record.quota_bucket,
+                    "niche": record.niche,
+                    "problem_type": record.problem_type,
+                    "product_type": record.product_type,
+                    "opportunity_score": record.opportunity_score,
+                    "opportunity_confidence": record.opportunity_confidence,
+                    "evidence_coverage": record.evidence_coverage,
+                    "selection_rank": record.selection_rank,
+                    "selection_utility": record.selection_utility,
+                    "selection_reasons": list(record.selection_reasons or []),
+                    "warnings": [],
+                    "selected_at": _aware(record.selected_at),
+                } for record in records]
+        except SQLAlchemyError as exc:
+            raise RepositoryError("Não foi possível consultar oportunidades selecionadas.") from exc
+
     def save_deep_research_run(self, run: Any) -> Any:
         now = datetime.now(timezone.utc)
         try:
@@ -1282,13 +1395,13 @@ class SqlAlchemyProductRepository(ProductRepository, ClusterRepository):
                     competitor_count_analyzed=dossier.competitor_count_analyzed,
                     research_coverage=dossier.research_coverage,
                     research_confidence=dossier.research_confidence,
-                    pricing_analysis=dossier.pricing_analysis,
-                    competitor_profiles=[profile.as_dict() for profile in dossier.competitor_profiles],
-                    feature_matrix=dossier.feature_matrix,
-                    review_analysis=dossier.review_analysis,
-                    keyword_analysis=dossier.keyword_analysis,
-                    product_structure_analysis=dossier.product_structure_analysis,
-                    screenshots=dossier.screenshots,
+                    pricing_analysis=_json_compatible(dossier.pricing_analysis),
+                    competitor_profiles=_json_compatible([profile.as_dict() for profile in dossier.competitor_profiles]),
+                    feature_matrix=_json_compatible(dossier.feature_matrix),
+                    review_analysis=_json_compatible(dossier.review_analysis),
+                    keyword_analysis=_json_compatible(dossier.keyword_analysis),
+                    product_structure_analysis=_json_compatible(dossier.product_structure_analysis),
+                    screenshots=_json_compatible(dossier.screenshots),
                     market_patterns=dossier.market_patterns,
                     observed_gaps=dossier.observed_gaps,
                     differentiation_axes=dossier.differentiation_axes,
@@ -1308,6 +1421,243 @@ class SqlAlchemyProductRepository(ProductRepository, ClusterRepository):
         except SQLAlchemyError as exc:
             logger.exception("database error while saving deep research dossier cluster_id=%s", dossier.cluster_id)
             raise RepositoryError("Não foi possível persistir o dossier de deep research.") from exc
+
+    def latest_deep_research_run(self, selection_run_id: int | None = None) -> dict[str, Any] | None:
+        try:
+            with self._sessions() as session:
+                statement = select(DeepResearchRunRecord)
+                if selection_run_id is not None:
+                    statement = statement.where(DeepResearchRunRecord.selection_run_id == selection_run_id)
+                record = session.scalar(statement.order_by(DeepResearchRunRecord.id.desc()))
+                if record is None:
+                    return None
+                return {
+                    "id": record.id,
+                    "selection_run_id": record.selection_run_id,
+                    "model_version": record.model_version,
+                    "target_count": record.target_count,
+                    "started_at": _aware(record.started_at),
+                    "completed_at": _aware(record.completed_at),
+                }
+        except SQLAlchemyError as exc:
+            raise RepositoryError("Não foi possível consultar a execução de Deep Research.") from exc
+
+    def list_deep_research_dossiers(self, run_id: int) -> list[Any]:
+        from market_intelligence.deep_research.models import CompetitorProfile, DeepResearchDossier
+
+        try:
+            with self._sessions() as session:
+                records = session.scalars(
+                    select(DeepResearchDossierRecord)
+                    .where(DeepResearchDossierRecord.run_id == run_id)
+                    .order_by(DeepResearchDossierRecord.research_rank.asc())
+                ).all()
+                return [DeepResearchDossier(
+                    id=record.id,
+                    run_id=record.run_id,
+                    cluster_id=record.cluster_id,
+                    cluster_name=record.cluster_name,
+                    research_rank=record.research_rank,
+                    competitor_count_analyzed=record.competitor_count_analyzed,
+                    pricing_analysis=dict(record.pricing_analysis or {}),
+                    competitor_profiles=[CompetitorProfile(**profile) for profile in (record.competitor_profiles or [])],
+                    feature_matrix=dict(record.feature_matrix or {}),
+                    review_analysis=dict(record.review_analysis or {}),
+                    keyword_analysis=dict(record.keyword_analysis or {}),
+                    product_structure_analysis=dict(record.product_structure_analysis or {}),
+                    screenshots=list(record.screenshots or []),
+                    market_patterns=list(record.market_patterns or []),
+                    observed_gaps=list(record.observed_gaps or []),
+                    differentiation_axes=list(record.differentiation_axes or []),
+                    confirmations=list(record.confirmations or []),
+                    contradictions=list(record.contradictions or []),
+                    warnings=list(record.warnings or []),
+                    research_findings=list(record.research_findings or []),
+                    confidence_adjustment_recommendation=record.confidence_adjustment_recommendation,
+                    research_coverage=record.research_coverage,
+                    research_confidence=record.research_confidence,
+                    status=record.status,
+                    model_version=record.model_version,
+                    created_at=_aware(record.created_at) or datetime.now(timezone.utc),
+                    completed_at=_aware(record.completed_at),
+                ) for record in records]
+        except (SQLAlchemyError, TypeError) as exc:
+            raise RepositoryError("Não foi possível consultar dossiers de Deep Research.") from exc
+
+    def save_top10_run(self, run: Any) -> Any:
+        now = datetime.now(timezone.utc)
+        try:
+            with self._sessions.begin() as session:
+                record = Top10SelectionRunRecord(
+                    deep_research_run_id=run.deep_research_run_id,
+                    model_version=run.model_version,
+                    configuration=run.configuration,
+                    candidate_count=run.candidate_count,
+                    selected_count=run.selected_count,
+                    started_at=run.started_at or now,
+                    completed_at=run.completed_at or now,
+                )
+                session.add(record)
+                session.flush()
+                run.id = record.id
+            return run
+        except SQLAlchemyError as exc:
+            raise RepositoryError("Não foi possível persistir a seleção Top 10.") from exc
+
+    def save_top10_opportunity(self, item: Any, run_id: int) -> Any:
+        try:
+            with self._sessions.begin() as session:
+                record = Top10OpportunityRecord(
+                    run_id=run_id,
+                    cluster_id=item.cluster_id,
+                    cluster_name=item.cluster_name,
+                    top10_rank=item.top10_rank,
+                    opportunity_score=item.opportunity_score,
+                    top10_selection_utility=item.top10_selection_utility,
+                    deep_research_verdict=item.deep_research_verdict,
+                    research_confidence=item.research_confidence,
+                    selection_reasons=list(item.selection_reasons),
+                    warnings=list(item.warnings),
+                    selected_at=item.selected_at,
+                )
+                session.add(record)
+                session.flush()
+                item.id = record.id
+            return item
+        except (SQLAlchemyError, AttributeError) as exc:
+            raise RepositoryError("Não foi possível persistir uma oportunidade Top 10.") from exc
+
+    def latest_top10_run(self, deep_research_run_id: int | None = None) -> dict[str, Any] | None:
+        try:
+            with self._sessions() as session:
+                statement = select(Top10SelectionRunRecord)
+                if deep_research_run_id is not None:
+                    statement = statement.where(Top10SelectionRunRecord.deep_research_run_id == deep_research_run_id)
+                record = session.scalar(statement.order_by(Top10SelectionRunRecord.id.desc()))
+                if record is None:
+                    return None
+                return {
+                    "id": record.id,
+                    "deep_research_run_id": record.deep_research_run_id,
+                    "model_version": record.model_version,
+                    "configuration": record.configuration,
+                    "candidate_count": record.candidate_count,
+                    "selected_count": record.selected_count,
+                }
+        except SQLAlchemyError as exc:
+            raise RepositoryError("Não foi possível consultar a seleção Top 10.") from exc
+
+    def list_top10_opportunities(self, run_id: int, limit: int = 10) -> list[dict[str, Any]]:
+        try:
+            with self._sessions() as session:
+                records = session.scalars(
+                    select(Top10OpportunityRecord)
+                    .where(Top10OpportunityRecord.run_id == run_id)
+                    .order_by(Top10OpportunityRecord.top10_rank.asc())
+                    .limit(limit)
+                ).all()
+                return [{
+                    "id": record.id,
+                    "run_id": record.run_id,
+                    "cluster_id": record.cluster_id,
+                    "cluster_name": record.cluster_name,
+                    "top10_rank": record.top10_rank,
+                    "opportunity_score": record.opportunity_score,
+                    "top10_selection_utility": record.top10_selection_utility,
+                    "deep_research_verdict": record.deep_research_verdict,
+                    "research_confidence": record.research_confidence,
+                    "selection_reasons": list(record.selection_reasons or []),
+                    "warnings": list(record.warnings or []),
+                } for record in records]
+        except SQLAlchemyError as exc:
+            raise RepositoryError("Não foi possível consultar oportunidades Top 10.") from exc
+
+    def save_thesis(self, thesis: Any) -> Any:
+        try:
+            with self._sessions.begin() as session:
+                record = OpportunityThesisRecord(
+                    cluster_id=thesis.cluster_id,
+                    target_buyer=thesis.target_buyer,
+                    problem=thesis.problem,
+                    market_evidence=list(thesis.market_evidence),
+                    buyer_evidence=list(thesis.buyer_evidence),
+                    competitor_weaknesses=list(thesis.competitor_weaknesses),
+                    critical_gaps=list(thesis.critical_gaps),
+                    proposed_advantage=list(thesis.proposed_advantage),
+                    opportunity_statement=thesis.opportunity_statement,
+                    evidence_refs=list(thesis.evidence_refs),
+                    confidence=thesis.confidence,
+                    created_at=thesis.created_at,
+                )
+                session.add(record)
+                session.flush()
+                thesis.id = record.id
+            return thesis
+        except (SQLAlchemyError, AttributeError) as exc:
+            raise RepositoryError("Não foi possível persistir a Opportunity Thesis.") from exc
+
+    def latest_thesis(self, cluster_id: int) -> dict[str, Any] | None:
+        try:
+            with self._sessions() as session:
+                record = session.scalar(select(OpportunityThesisRecord).where(OpportunityThesisRecord.cluster_id == cluster_id).order_by(OpportunityThesisRecord.id.desc()))
+                if record is None:
+                    return None
+                return {
+                    "id": record.id, "cluster_id": record.cluster_id, "target_buyer": record.target_buyer,
+                    "problem": record.problem, "market_evidence": record.market_evidence, "buyer_evidence": record.buyer_evidence,
+                    "competitor_weaknesses": record.competitor_weaknesses, "critical_gaps": record.critical_gaps,
+                    "proposed_advantage": record.proposed_advantage, "opportunity_statement": record.opportunity_statement,
+                    "evidence_refs": record.evidence_refs, "confidence": record.confidence,
+                    "created_at": (_aware(record.created_at) or datetime.now(timezone.utc)).isoformat(),
+                    "model_version": "opportunity-thesis-v1",
+                }
+        except SQLAlchemyError as exc:
+            raise RepositoryError("Não foi possível consultar a Opportunity Thesis.") from exc
+
+    def save_blueprint(self, blueprint: Any) -> Any:
+        payload = blueprint.as_dict()
+        try:
+            with self._sessions.begin() as session:
+                record = ProductBlueprintRecord(**{key: payload[key] for key in payload if key not in {"cluster_id", "created_at"}}, cluster_id=blueprint.cluster_id, created_at=blueprint.created_at)
+                session.add(record)
+                session.flush()
+                blueprint.id = record.id
+            return blueprint
+        except (SQLAlchemyError, AttributeError, TypeError) as exc:
+            raise RepositoryError("Não foi possível persistir o Product Blueprint.") from exc
+
+    def latest_blueprint(self, cluster_id: int) -> dict[str, Any] | None:
+        try:
+            with self._sessions() as session:
+                record = session.scalar(select(ProductBlueprintRecord).where(ProductBlueprintRecord.cluster_id == cluster_id).order_by(ProductBlueprintRecord.id.desc()))
+                if record is None:
+                    return None
+                result = {column.name: getattr(record, column.name) for column in ProductBlueprintRecord.__table__.columns if column.name != "id"}
+                result["id"] = record.id
+                result["created_at"] = (_aware(record.created_at) or datetime.now(timezone.utc)).isoformat()
+                result["model_version"] = "product-blueprint-v1"
+                return result
+        except SQLAlchemyError as exc:
+            raise RepositoryError("Não foi possível consultar o Product Blueprint.") from exc
+
+    def observation_metadata(self, cluster_ids: list[int]) -> dict[str, Any]:
+        if not cluster_ids:
+            return {"cluster_ids": [], "observation_count": 0, "observed_from": None, "observed_to": None}
+        try:
+            with self._sessions() as session:
+                rows = session.execute(
+                    select(func.count(ProductRecord.id), func.min(ProductRecord.collected_at), func.max(ProductRecord.collected_at))
+                    .join(ProductClusterMembershipRecord, ProductClusterMembershipRecord.product_id == ProductRecord.id)
+                    .where(ProductClusterMembershipRecord.cluster_id.in_(cluster_ids))
+                ).one()
+                return {
+                    "cluster_ids": sorted(cluster_ids),
+                    "observation_count": int(rows[0] or 0),
+                    "observed_from": _aware(rows[1]).isoformat() if rows[1] else None,
+                    "observed_to": _aware(rows[2]).isoformat() if rows[2] else None,
+                }
+        except SQLAlchemyError as exc:
+            raise RepositoryError("Não foi possível consultar metadados de observação.") from exc
 
     def save_competitor_profile(self, profile: Any, run_id: int | None = None) -> Any:
         try:
@@ -1479,3 +1829,15 @@ def _aware(value: datetime | None) -> datetime | None:
     if value is None or value.tzinfo is not None:
         return value
     return value.replace(tzinfo=timezone.utc)
+
+
+def _json_compatible(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {str(key): _json_compatible(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_compatible(item) for item in value]
+    return value

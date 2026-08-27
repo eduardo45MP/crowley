@@ -1,30 +1,23 @@
 # Crowley
 
-Crowley é um pipeline determinístico de market intelligence local para identificar oportunidades de produtos digitais em nichos específicos. O código atual implementa coleta, normalização, clustering, análise de demanda, competição, compra, build ease, diferenciação, oportunidade, elegibilidade, seleção e deep research.
-
-A documentação de arquitetura e a disciplina do projeto estão em [docs/architecture.md](docs/architecture.md) e [docs/pipeline.md](docs/pipeline.md).
-
-## Status da implementação
-
-A implementação atual cobre esta sequência:
+Crowley é um pipeline local, determinístico e auditável para descobrir e publicar oportunidades de produtos digitais. O MVP é um monólito modular: coleta evidência, normaliza, agrupa mercados, calcula dimensões independentes, aplica decisão de portfólio, aprofunda o Top 10 e publica um snapshot editorial em JSON, CSV, XLSX e PDF.
 
 ```text
-Crawler
-  -> normalização
-  -> clustering
-  -> market intelligence
-      -> demand
-      -> competition
-      -> purchase_intent
-      -> build_ease
-      -> differentiation
-      -> opportunity score
-      -> eligibility
-      -> selection
-      -> deep_research
+Crawler -> Normalization -> Clustering -> Market Intelligence
+-> Opportunity -> Eligibility -> Selection -> Deep Research
+-> Top10 -> Opportunity Thesis -> Product Blueprint
+-> Editorial Snapshot -> Reporting
 ```
 
-O repositório ainda não inclui uma API HTTP, dashboard, jobs assíncronos, exportação de relatórios em PDF/XLSX, ou migrações Alembic. Esses itens continuam como arquitetura futura ou planejamento explícito, não como serviços implementados.
+Princípios centrais:
+
+- evidência antes de geração;
+- raw observations são imutáveis;
+- cada estágio adiciona um artefato versionado;
+- Opportunity Score, Eligibility, Selection e Deep Research são decisões separadas;
+- Deep Research nunca altera retroativamente o Opportunity Score;
+- dados ausentes permanecem ausentes;
+- LLM não é dependência do pipeline.
 
 ## Setup
 
@@ -37,192 +30,80 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-A configuração principal usa SQLAlchemy 2 e um banco SQLite padrão:
+O banco padrão é SQLite:
 
 ```dotenv
 DATABASE_URL=sqlite:///./data/products.db
 ```
 
-## Como rodar o pipeline
+## Demonstração offline completa
 
-### 1) Coleta + normalização
+Este comando usa observações mock determinísticas, não usa rede e percorre todas as camadas até o relatório:
+
+```bash
+python -m market_intelligence pipeline demo --output-dir data/reports
+```
+
+Ele produz um diretório imutável `data/reports/<report-id>/` com:
+
+```text
+report.json
+opportunities.csv
+crowley-opportunities.xlsx
+crowley-report.pdf
+```
+
+Escolha outro `--output-dir` para repetir a mesma fixture; snapshots existentes não são sobrescritos.
+
+## Pipeline operacional
 
 ```bash
 python -m crawler search "bakery pricing calculator" --provider mock
-```
-
-Opções úteis:
-
-```bash
-python -m crawler search "bakery pricing calculator" \
-  --provider mock \
-  --limit 100 \
-  --output data/raw
-```
-
-`--output` aceita um diretório base ou um arquivo JSON final. O provider padrão é `mock`, o que mantém a execução funcional e determinística sem rede nem credenciais externas.
-
-### 2) Clustering
-
-```bash
 python -m crawler cluster --limit 500
-python -m crawler clusters --limit 20
-python -m crawler cluster-show 1
-```
-
-### 3) Market intelligence por dimensão
-
-Cada camada calcula uma dimensão independente e persiste resultados por cluster.
-
-```bash
-a) demand
 python -m market_intelligence demand calculate --limit 50
-
-b) competition
 python -m market_intelligence competition calculate --limit 50
-
-c) purchase-intent
 python -m market_intelligence purchase-intent calculate --limit 50
-
-d) build-ease
 python -m market_intelligence build-ease calculate --limit 50
-
-e) differentiation
 python -m market_intelligence differentiation calculate --limit 50
-```
-
-### 4) Opportunity score
-
-O Opportunity Score não inventa novas evidências. Ele combina os resultados das camadas independentes já calculadas.
-
-```bash
 python -m market_intelligence opportunity calculate --limit 50
-```
-
-### 5) Eligibility Filters
-
-A camada de elegibilidade responde: “esta oportunidade é aceitável para seguir para ranking e possível produção?”
-
-```bash
 python -m market_intelligence eligibility evaluate --limit 50
-```
-
-### 6) Selection
-
-A seleção não é um simples `ORDER BY score DESC LIMIT 100`; ela aplica quotas, diversificação e regra de portfólio.
-
-```bash
 python -m market_intelligence selection run --limit 200
+python -m market_intelligence deep-research run --selection-run <id> --top 25
+python -m market_intelligence top10 select --selection-run <id> --top 10
+python -m market_intelligence blueprint generate --selection-run <id> --top 10
+python -m market_intelligence report build --selection-run <id> --top 100 --top10 10 \
+  --output-dir data/reports --formats json,csv,xlsx,pdf
+python -m market_intelligence report show --output-dir data/reports
 ```
 
-### 7) Deep Research / Due Diligence
+Os comandos imprimem IDs, contagens e paths. `report build` exige uma execução de Selection persistida e informa de forma acionável quando o dado necessário não existe.
 
-A camada de deep research é separada e determinística, com foco em evidência e auditoria, sem uso de LLM na V1.
+## Produto editorial
 
-```bash
-python -m market_intelligence deep-research run --limit 25 --top 25
-```
+O ranking publicado vem da ordem diversity-aware de Selection e preserva `selection_rank`; não é recalculado com um sort por Opportunity Score. Se houver menos de 100 oportunidades selecionadas, o snapshot publica somente as disponíveis e registra o shortfall.
 
-## Estrutura do código
+O Top 10 preserva `top10_rank` e incorpora, quando persistidos, Deep Research, Opportunity Thesis e Product Blueprint. Campos sem suporte permanecem `null`, vazios ou acompanhados de warning.
+
+Pricing editorial preserva mínimo, mediana e máximo observados. A recomendação é uma heurística determinística: `110% da mediana`, limitada ao intervalo observado. Não representa willingness-to-pay.
+
+Revenue Efficiency v1 usa:
 
 ```text
-src/
-  crawler/
-    cli.py
-    config.py
-    models.py
-    clustering.py
-    normalization.py
-    normalizers/
-    providers/
-    repositories/
-    services/
-    storage/
-
-  market_intelligence/
-    __main__.py
-    cli.py
-    demand/
-    competition/
-    purchase_intent/
-    build_ease/
-    differentiation/
-    opportunity/
-    eligibility/
-    selection/
-    deep_research/
-    taxonomy/
+100 * opportunity_score / (opportunity_score + 2 * max(build_hours, 1))
 ```
 
-Os módulos principais refletem o que existe hoje:
+É uma métrica comparativa 0-100, não previsão de receita.
 
-- `crawler`: coleta, normalização, deduplicação, clustering e persistência.
-- `market_intelligence/demand`: sinais de demanda e volume de procura.
-- `market_intelligence/competition`: estrutura competitiva e ambiente de mercado.
-- `market_intelligence/purchase_intent`: intenção de compra e valor percebido.
-- `market_intelligence/build_ease`: complexidade e esforço de produção.
-- `market_intelligence/differentiation`: diferenciação, lacunas, e proposições.
-- `market_intelligence/opportunity`: agregação final em 0-100.
-- `market_intelligence/eligibility`: filtros de aceitabilidade para ranking.
-- `market_intelligence/selection`: seleção final do portfólio.
-- `market_intelligence/deep_research`: due diligence explicita e auditável.
+## Persistência e rastreabilidade
 
-## Providers e normalização
+O repository SQLAlchemy persiste runs e artefatos de todas as camadas, incluindo Selection, Deep Research, Top10, Thesis e Blueprint. O `ReportSnapshot` fixa versões, run IDs, contagens, schema assumido e janela de observação.
 
-### `mock`
+```text
+report -> editorial opportunity -> selection/top10 -> opportunity score
+-> component scores -> cluster -> normalized products -> raw observations
+```
 
-Operacional e determinístico; usa payloads locais representativos.
-
-### `etsy`
-
-Implementado como adapter oficial da Etsy Open API v3; requer credenciais aprovadas e usa `ETSY_API_KEY` e `ETSY_API_SECRET`.
-
-O projeto trata source adapters como fronteiras de coleta. Os providers não inferem decisões de oportunidade; eles apenas capturam raw payloads e deixam a normalização transformar em domínio canônico.
-
-## Persistência e schema
-
-O repositório de persistência em [src/crawler/repositories/sqlalchemy_repository.py](src/crawler/repositories/sqlalchemy_repository.py) cria as tabelas com `SQLAlchemy.metadata.create_all()`. A estrutura atual inclui:
-
-- `raw_marketplace_products`
-- `products`
-- `cluster_runs`
-- `product_clusters`
-- `product_cluster_memberships`
-- `demand_analysis_runs`
-- `cluster_demand_scores`
-- `competition_analysis_runs`
-- `cluster_competition_scores`
-- `purchase_intent_analysis_runs`
-- `cluster_purchase_intent_scores`
-- `build_ease_analysis_runs`
-- `cluster_build_ease_scores`
-- `differentiation_analysis_runs`
-- `cluster_differentiation_scores`
-- `eligibility_evaluation_runs`
-- `cluster_eligibility_results`
-- `opportunity_analysis_runs`
-- `cluster_opportunity_scores`
-- `selection_runs`
-- `selected_opportunities`
-- `deep_research_runs`
-- `deep_research_dossiers`
-
-A persistência é SQLite-first, mas o modelo SQLAlchemy é compatível com outros dialetos com ajustes discretos de driver e migração.
-
-## O que não existe nesta V1
-
-Como parte do código atual, não há:
-
-- API HTTP com FastAPI/Flask
-- dashboard interno
-- workers/jobs assíncronos independentes
-- outbox/event bus de produção
-- Alembic ou migrations
-- exportações PDF/XLSX automatizadas
-- SSO ou autenticação do usuário
-- LLM no deep research
-
-Esses itens podem ser parte de uma arquitetura futura, mas não devem ser documentados como presentes no código atual.
+Consulte [docs/data-model.md](docs/data-model.md) e [docs/provenance.md](docs/provenance.md).
 
 ## Testes
 
@@ -230,14 +111,8 @@ Esses itens podem ser parte de uma arquitetura futura, mas não devem ser docume
 pytest
 ```
 
-Os testes existentes validam a coleta e a determinismo de deep research, sem depender de marketplace real.
+A integração cobre banco temporário, análises persistidas, Selection, Deep Research, Top10, Thesis, Blueprint, snapshot e os quatro exportadores.
 
-## Arquivos de documentação
+## Fora do escopo
 
-- [docs/architecture.md](docs/architecture.md): visão arquitetural e separação de responsabilidades.
-- [docs/pipeline.md](docs/pipeline.md): fluxo do pipeline e ordem de execução.
-- [docs/data-model.md](docs/data-model.md): entidades de domínio e classes persistidas.
-
-## Observação de projeto
-
-A arquitetura do Crowley prioriza evidência, rastreabilidade e separação clara de camadas. A regra central do código é simples: cada camada produz resultados independentes e o próximo estágio apenas consome esses resultados, em vez de reinventar ou ocultar evidências.
+O MVP não implementa API HTTP, dashboard, background workers, Kubernetes, SSO/auth, billing, SaaS público, automação de publicação em marketplaces, criação automática do produto vendido ou pesquisa dependente de LLM.

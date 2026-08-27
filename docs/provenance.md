@@ -57,3 +57,14 @@ O dossier mantém a origem observável em:
 ## Limite de auditoria atual
 
 O projeto ainda não implementa um sistema de outbox, event stream ou dashboard para revisar provas de forma centralizada. Mas a estrutura de banco e de modelos já preserva os elementos necessários para rastrear a origem dos principais resultados.
+
+## Snapshot publicado
+
+Cada `report.json` contém `ReportSnapshot`, model versions, run IDs e refs por cluster. O diretório do report é imutável e permite seguir:
+
+```text
+report -> PublishedOpportunity -> Selection/Top10 -> Opportunity
+-> component analyses -> cluster memberships -> Product -> RawMarketplaceProduct
+```
+
+CSV, XLSX e PDF são projeções do mesmo `PublishedReport`; não possuem lógica paralela de scoring.

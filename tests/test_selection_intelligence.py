@@ -58,3 +58,27 @@ def test_selection_respects_buyer_group_quota_and_shortfall():
     assert result.run.selected_count == 4
     assert sum(1 for item in result.selected if item.buyer_group == "small_business") <= 2
     assert sum(1 for item in result.selected if item.buyer_group == "other") <= 2
+
+
+def test_selection_enforces_group_maximum_and_problem_limit_during_fill():
+    policy = SelectionPolicy(
+        target_size=10,
+        max_per_niche=5,
+        max_problem_share=0.20,
+        buyer_group_quotas={
+            "small_business": {"minimum": 0, "target": 1, "maximum": 2},
+            "other": {"minimum": 0, "target": 8, "maximum": 8},
+        },
+    )
+    candidates = [
+        _candidate(index, 100 - index, "small_business", f"niche-{index}", "pricing", "calculator")
+        for index in range(1, 8)
+    ] + [
+        _candidate(20 + index, 80 - index, "other", f"other-{index}", f"problem-{index}", "spreadsheet")
+        for index in range(1, 9)
+    ]
+
+    result = PortfolioSelector(policy=policy).select(candidates)
+
+    assert sum(item.buyer_group == "small_business" for item in result.selected) <= 2
+    assert sum(item.problem_type == "pricing" for item in result.selected) <= 5

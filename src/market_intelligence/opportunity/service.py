@@ -90,7 +90,6 @@ class OpportunityAnalysisService:
             analysis.model_version = self.model_version
             result.model_version = self.model_version
             if self.repository is not None and cluster_id is not None:
-                result.run_id = run.id
                 score_payload = type("OpportunityRecord", (), {
                     "cluster_id": cluster_id,
                     "opportunity_score": result.opportunity_score,

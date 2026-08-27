@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from math import ceil
 
 from market_intelligence.selection.config import SelectionPolicy
 from market_intelligence.selection.models import OpportunityCandidate, SelectedOpportunity, SelectionResult, SelectionRun
@@ -35,6 +36,25 @@ class PortfolioSelector:
             float(candidate.evidence_coverage or 0.0),
             candidate.cluster_id if candidate.cluster_id is not None else -1,
         )
+
+    def _within_portfolio_limits(
+        self,
+        candidate: OpportunityCandidate,
+        category_counts: dict[str, int],
+        niche_counts: dict[str, int],
+        problem_counts: dict[str, int],
+        policy: SelectionPolicy,
+    ) -> bool:
+        group = self._normalize_group(candidate)
+        quota = policy.buyer_group_quotas.get(group)
+        if quota is not None and category_counts.get(group, 0) >= quota.get("maximum", policy.target_size):
+            return False
+        if niche_counts.get(candidate.niche or "unknown", 0) >= policy.max_per_niche:
+            return False
+        problem_limit = max(policy.max_per_niche, ceil(policy.target_size * policy.max_problem_share))
+        if problem_counts.get(candidate.problem_type or "unknown", 0) >= problem_limit:
+            return False
+        return True
 
     def _append_selected(
         self,
@@ -159,6 +179,8 @@ class PortfolioSelector:
                 for candidate in group_candidates:
                     if candidate.cluster_id in selected_ids:
                         continue
+                    if not self._within_portfolio_limits(candidate, category_counts, niche_counts, problem_counts, effective_policy):
+                        continue
                     candidate_score = selection_utility(candidate, [
                         OpportunityCandidate(
                             cluster_id=item.cluster_id,
@@ -190,7 +212,7 @@ class PortfolioSelector:
                         continue
                     if self._normalize_group(candidate) != group:
                         continue
-                    if niche_counts.get(candidate.niche or "unknown", 0) >= effective_policy.max_per_niche:
+                    if not self._within_portfolio_limits(candidate, category_counts, niche_counts, problem_counts, effective_policy):
                         continue
                     utility = selection_utility(candidate, [
                         OpportunityCandidate(
@@ -220,7 +242,7 @@ class PortfolioSelector:
             for candidate in ranked:
                 if candidate.cluster_id in selected_ids:
                     continue
-                if niche_counts.get(candidate.niche or "unknown", 0) >= effective_policy.max_per_niche:
+                if not self._within_portfolio_limits(candidate, category_counts, niche_counts, problem_counts, effective_policy):
                     continue
                 utility = selection_utility(candidate, [
                     OpportunityCandidate(

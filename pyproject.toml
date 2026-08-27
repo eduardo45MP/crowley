@@ -9,7 +9,11 @@ description = "Local marketplace research crawler"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-dependencies = ["SQLAlchemy>=2.0,<3"]
+dependencies = [
+    "SQLAlchemy>=2.0,<3",
+    "openpyxl>=3.1,<4",
+    "reportlab>=4,<5",
+]
 
 [project.scripts]
 crawler = "crawler.cli:main"

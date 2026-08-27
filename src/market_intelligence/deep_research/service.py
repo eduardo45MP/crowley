@@ -301,11 +301,16 @@ class DeepResearchService:
     @staticmethod
     def _keyword_analysis(members: list[object], keyword_counter: Counter) -> KeywordAnalysis:
         top_keywords = [item for item, _ in keyword_counter.most_common(8)]
+        long_tail_keywords = sorted({
+            " ".join(str(keyword).strip().lower() for keyword in (product.keywords or [])[:4] if str(keyword).strip())
+            for product in members
+            if len(product.keywords or []) >= 2
+        })
         return KeywordAnalysis(
             top_keywords=top_keywords,
             keyword_frequency=dict(keyword_counter.most_common(8)),
             keyword_variants={"pricing": list(sorted({token for token in top_keywords if "pricing" in token or "cost" in token or "budget" in token}))},
-            long_tail_keywords=["bakery pricing spreadsheet", "home baker pricing tool"],
+            long_tail_keywords=long_tail_keywords[:8],
             intent_classification={
                 "product_intent": [item for item in top_keywords if "calculator" in item or "spreadsheet" in item],
                 "problem_intent": [item for item in top_keywords if "pricing" in item or "cost" in item],

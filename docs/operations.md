@@ -1,98 +1,58 @@
-# Operações e execução do Crowley
+# Operações do Crowley
 
-## Requisitos
-
-- Python 3.11+
-- venv local
-- SQLite por padrão
-- pacote do projeto instalado em modo editável
-
-## Setup inicial
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-```
-
-## Variáveis de ambiente
-
-O repositório suporta configuração básica de crawler e banco:
+## Configuração
 
 ```dotenv
 DATABASE_URL=sqlite:///./data/products.db
-ETSY_API_KEY=your_keystring
-ETSY_API_SECRET=your_shared_secret
+ETSY_API_KEY=optional
+ETSY_API_SECRET=optional
 ```
 
-## Fluxo operacional típico
+O provider `mock` e o pipeline editorial não precisam de rede, credenciais ou LLM.
 
-### 1. Coletar dados
+## Smoke test completo
 
 ```bash
-python -m crawler search "bakery pricing calculator" --provider mock
+python -m market_intelligence pipeline demo --output-dir data/reports
 ```
 
-### 2. Agrupar em clusters
+O comando persiste uma fixture offline com raw observations, produtos, clusters, análises, eligibility, selection, research, Top10, theses e blueprints; depois publica os quatro formatos.
+
+## Execução com dados coletados
+
+Siga a sequência do README. Anote o `Run ID` impresso por Selection e reutilize-o:
 
 ```bash
-python -m crawler cluster --limit 500
+python -m market_intelligence deep-research run --selection-run 12 --top 25
+python -m market_intelligence top10 select --selection-run 12 --top 10
+python -m market_intelligence blueprint generate --selection-run 12 --top 10
+python -m market_intelligence report build --selection-run 12 \
+  --top 100 --top10 10 --output-dir data/reports \
+  --formats json,csv,xlsx,pdf
 ```
 
-### 3. Calcular dimensões
+## Inspeção
 
 ```bash
-python -m market_intelligence demand calculate --limit 50
-python -m market_intelligence competition calculate --limit 50
-python -m market_intelligence purchase-intent calculate --limit 50
-python -m market_intelligence build-ease calculate --limit 50
-python -m market_intelligence differentiation calculate --limit 50
+python -m market_intelligence report show --output-dir data/reports
+python -m market_intelligence report show --report-id <report-id> --output-dir data/reports
 ```
 
-### 4. Consolidar opportunity score
+Validação operacional:
 
 ```bash
-python -m market_intelligence opportunity calculate --limit 50
+python -m json.tool data/reports/<report-id>/report.json >/dev/null
+python -c "from openpyxl import load_workbook; print(load_workbook('data/reports/<report-id>/crowley-opportunities.xlsx').sheetnames)"
+pdfinfo data/reports/<report-id>/crowley-report.pdf
 ```
 
-### 5. Avaliar elegibilidade
+## Erros comuns
 
-```bash
-python -m market_intelligence eligibility evaluate --limit 50
-```
+- `Nenhuma execução de Selection persistida`: execute `selection run`.
+- Selection sem oportunidades: confira Eligibility e os mínimos da policy; não fabrique candidatos.
+- Snapshot já existe: use outro diretório/edição; publicação é imutável.
+- Erro de XLSX/PDF: reinstale dependências com `pip install -r requirements.txt`.
 
-### 6. Selecionar portfólio
+## Limites
 
-```bash
-python -m market_intelligence selection run --limit 200
-```
-
-### 7. Deep research
-
-```bash
-python -m market_intelligence deep-research run --limit 25 --top 25
-```
-
-## Observações de execução
-
-- Usa `SQLAlchemy.metadata.create_all()` para bootstrap inicial.
-- Não há workers independentes em execução no código atual.
-- Os resultados são persistidos no banco e podem ser consultados/reatualizados em várias execuções.
-- A execução é local e determinística, sem dependência de serviço externo para os valores principais.
-
-## Boas práticas
-
-- sempre preservar a sequência de etapas
-- nunca reescrever resultados brutos
-- usar o `cluster_id` para rastrear a origem de cada score
-- tratar `eligibility`, `selection` e `deep_research` como etapas diferenciadas
-
-## Limites operacionais conhecidos
-
-- sem fila de background
-- sem API de consulta em tempo real
-- sem exportação de PDF/XLSX
-- sem migração de schema automatizada
-
-Esses limites são explícitos e não devem ser tratados como implementados no código atual.
+Não há scheduler, workers, API, dashboard, SSO, billing, SaaS, marketplace publishing ou criação automática de produtos. O operador executa comandos locais e preserva banco e diretórios de reports como registros de auditoria.

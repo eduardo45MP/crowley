@@ -28,6 +28,8 @@ class EligibilityResult:
     warnings: list[str] = field(default_factory=list)
     evaluated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     model_version: str = "eligibility-v1"
+    id: int | None = None
+    run_id: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {

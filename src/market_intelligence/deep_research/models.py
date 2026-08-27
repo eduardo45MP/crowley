@@ -144,6 +144,8 @@ class DeepResearchRun:
 class DeepResearchDossier:
     cluster_id: int | None
     cluster_name: str | None
+    id: int | None = None
+    run_id: int | None = None
     selection_run_id: int | None = None
     research_rank: int = 0
     competitor_count_analyzed: int = 0
@@ -173,6 +175,8 @@ class DeepResearchDossier:
         return {
             "cluster_id": self.cluster_id,
             "cluster_name": self.cluster_name,
+            "id": self.id,
+            "run_id": self.run_id,
             "selection_run_id": self.selection_run_id,
             "research_rank": self.research_rank,
             "competitor_count_analyzed": self.competitor_count_analyzed,

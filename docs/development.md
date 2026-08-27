@@ -1,52 +1,46 @@
 # Desenvolvimento do Crowley
 
-## Estrutura de módulos
+## Setup e testes
 
-O código segue uma arquitetura de monólito modular em `src/`.
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pytest
+```
 
-### `src/crawler`
+Dependências de runtime: SQLAlchemy, openpyxl e ReportLab. Pytest é dependência de desenvolvimento declarada em `requirements.txt`.
 
-Responsável por coleta e normalização.
+## Organização
 
-### `src/market_intelligence`
+- `src/crawler`: providers, normalização, clustering e repository;
+- `src/market_intelligence/<dimension>`: dimensões independentes;
+- `opportunity`, `eligibility`, `selection`: score e decisões separadas;
+- `deep_research`, `top10`, `product_blueprint`: due diligence e produto;
+- `editorial`: projeção de publicação e métricas editoriais;
+- `reporting`: JSON/CSV/XLSX/PDF;
+- `demo.py`: fixture offline end-to-end.
 
-Responsável por inferência de mercado e ranking.
+## Regras para mudanças
 
-## Convenções do projeto
+- não recalcular dimensão upstream dentro de editorial/reporting;
+- não modificar raw observations;
+- persistir run, model version e origem;
+- manter `None` quando a evidência não existe;
+- não introduzir LLM obrigatório;
+- preservar `selection_rank` e `top10_rank`;
+- criar novo snapshot em vez de sobrescrever um existente.
 
-- lógica determinística e auditável
-- uso explícito de `model_version`
-- persistência por execução por análise
-- separação por camada funcional
-- dados brutos imutáveis
+## Testes editoriais
 
-## Como adicionar uma nova dimensão
+Cobrem pricing, positioning, Revenue Efficiency, keywords, mapping, ranking, serialização determinística e integração com banco temporário até os quatro arquivos. Ao alterar XLSX ou PDF, também faça inspeção estrutural e renderização visual.
 
-1. criar submódulo em `src/market_intelligence/<dimension>/`
-2. definir `config.py`, `models.py`, `features.py` e `service.py` conforme o padrão
-3. persistir `*_analysis_runs` e `cluster_*_scores`
-4. incluir a nova dimensão nos resultados de `opportunity`
-5. atualizar a documentação e os testes
+## Qualidade antes de merge
 
-## Como adicionar um novo provider
+```bash
+python -m compileall -q src tests
+pytest
+python -m market_intelligence pipeline demo --output-dir /tmp/crowley-reports
+```
 
-1. implementar `MarketplaceProvider` em `src/crawler/providers/`
-2. registrar o normalizer correspondente
-3. adicionar o provider à CLI `crawler`
-4. validar payload e normalização sem mudar o domínio canônico
-
-## Testes
-
-Os testes atuais estão em `tests/` e validam:
-
-- integração de crawler
-- persistência em JSON
-- normalização
-- deep research determinístico
-
-## Regras de manutenção
-
-- não inventar endpoints, tabelas ou workflows que não existam
-- manter a rastreabilidade por `cluster_id` e `model_version`
-- não conflitar `Opportunity Score` com `Eligibility` ou `Selection`
-- documentar a diferença entre implementado e planejado
+Abra o XLSX com `openpyxl`, valide o JSON/CSV, use `pdfinfo` e renderize o PDF com `pdftoppm` para detectar clipping.

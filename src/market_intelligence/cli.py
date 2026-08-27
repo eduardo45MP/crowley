@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from crawler.config import CrawlerConfig, load_dotenv
@@ -11,15 +12,17 @@ from crawler.repositories.sqlalchemy_repository import SqlAlchemyProductReposito
 from market_intelligence.build_ease.service import BuildEaseAnalysisService
 from market_intelligence.competition.service import CompetitionAnalysisService
 from market_intelligence.deep_research.service import DeepResearchService
+from market_intelligence.demo import build_demo_report
+from market_intelligence.editorial.service import EditorialReportService
 from market_intelligence.demand.service import DemandScoringService
 from market_intelligence.differentiation.service import DifferentiationAnalysisService
 from market_intelligence.eligibility.service import EligibilityService
 from market_intelligence.opportunity.service import OpportunityAnalysisService
 from market_intelligence.product_blueprint.service import ProductBlueprintService
 from market_intelligence.purchase_intent.service import PurchaseIntentAnalysisService
+from market_intelligence.reporting.exporters import ReportExporter
 from market_intelligence.top10.selection import Top10Selector
 from market_intelligence.top10.thesis import OpportunityThesisService
-from market_intelligence.opportunity.models import OpportunityInputs
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -143,6 +146,26 @@ def _parser() -> argparse.ArgumentParser:
     blueprint_show.add_argument("--cluster-id", type=int, default=None)
     blueprint_show.add_argument("--top", type=int, default=10)
     blueprint_show.add_argument("--verbose", action="store_true")
+
+    report = subparsers.add_parser("report", help="build and inspect immutable editorial report snapshots")
+    report_subparsers = report.add_subparsers(dest="report_command", required=True)
+    report_build = report_subparsers.add_parser("build", help="build canonical JSON and complementary report artifacts")
+    report_build.add_argument("--selection-run", type=int, default=None)
+    report_build.add_argument("--top", type=int, default=100)
+    report_build.add_argument("--top10", type=int, default=10)
+    report_build.add_argument("--output-dir", type=str, default="data/reports")
+    report_build.add_argument("--formats", type=str, default="json,csv,xlsx,pdf")
+    report_build.add_argument("--verbose", action="store_true")
+    report_show = report_subparsers.add_parser("show", help="show metadata for an existing report snapshot")
+    report_show.add_argument("--report-id", type=str, default=None)
+    report_show.add_argument("--output-dir", type=str, default="data/reports")
+    report_show.add_argument("--verbose", action="store_true")
+
+    pipeline = subparsers.add_parser("pipeline", help="run deterministic offline pipeline fixtures")
+    pipeline_subparsers = pipeline.add_subparsers(dest="pipeline_command", required=True)
+    pipeline_demo = pipeline_subparsers.add_parser("demo", help="run the complete offline mock pipeline and build a report")
+    pipeline_demo.add_argument("--output-dir", type=str, default="data/reports")
+    pipeline_demo.add_argument("--verbose", action="store_true")
     return parser
 
 
@@ -246,51 +269,11 @@ def _run_opportunity_calculate(args: argparse.Namespace, config: CrawlerConfig) 
             raise ValueError(f"Cluster {args.cluster_id} não encontrado.")
         clusters = [cluster]
 
-    service = OpportunityAnalysisService()
-    results = []
-    for cluster in clusters:
-        inputs = {}
-        latest_demand = repository.latest_cluster_demand_score(cluster.id) if cluster.id is not None else None
-        latest_competition = repository.latest_cluster_competition_score(cluster.id) if cluster.id is not None else None
-        latest_purchase_intent = repository.latest_cluster_purchase_intent_score(cluster.id) if cluster.id is not None else None
-        latest_build_ease = repository.latest_cluster_build_ease_score(cluster.id) if cluster.id is not None else None
-        latest_differentiation = repository.latest_cluster_differentiation_score(cluster.id) if cluster.id is not None else None
-        if latest_demand is not None:
-            inputs["demand_score"] = latest_demand.get("demand_score")
-            inputs["demand_confidence"] = latest_demand.get("confidence")
-            inputs["demand_evidence_coverage"] = latest_demand.get("evidence_coverage")
-            inputs["demand_analysis_id"] = latest_demand.get("id")
-            inputs["demand_model_version"] = latest_demand.get("model_version")
-        if latest_competition is not None:
-            inputs["competition_score"] = latest_competition.get("competition_score")
-            inputs["competition_confidence"] = latest_competition.get("confidence")
-            inputs["competition_evidence_coverage"] = latest_competition.get("evidence_coverage")
-            inputs["competition_analysis_id"] = latest_competition.get("id")
-            inputs["competition_model_version"] = latest_competition.get("model_version")
-        if latest_purchase_intent is not None:
-            inputs["purchase_intent_score"] = latest_purchase_intent.get("purchase_intent_score")
-            inputs["purchase_intent_confidence"] = latest_purchase_intent.get("confidence")
-            inputs["purchase_intent_evidence_coverage"] = latest_purchase_intent.get("evidence_coverage")
-            inputs["purchase_intent_analysis_id"] = latest_purchase_intent.get("id")
-            inputs["purchase_intent_model_version"] = latest_purchase_intent.get("model_version")
-        if latest_build_ease is not None:
-            inputs["build_ease_score"] = latest_build_ease.get("build_ease_score")
-            inputs["build_ease_confidence"] = latest_build_ease.get("confidence")
-            inputs["build_ease_evidence_coverage"] = latest_build_ease.get("evidence_coverage")
-            inputs["build_ease_analysis_id"] = latest_build_ease.get("id")
-            inputs["build_ease_model_version"] = latest_build_ease.get("model_version")
-        if latest_differentiation is not None:
-            inputs["differentiation_score"] = latest_differentiation.get("differentiation_score")
-            inputs["differentiation_confidence"] = latest_differentiation.get("confidence")
-            inputs["differentiation_evidence_coverage"] = latest_differentiation.get("evidence_coverage")
-            inputs["differentiation_analysis_id"] = latest_differentiation.get("id")
-            inputs["differentiation_model_version"] = latest_differentiation.get("model_version")
-        inputs["cluster_id"] = cluster.id
-        payload = OpportunityInputs(cluster_id=cluster.id,**inputs,)
-        result = service.analyze_cluster(cluster.id,payload,)
-        results.append(result)
+    analysis = OpportunityAnalysisService(repository=repository).analyze(clusters)
+    results = analysis.scores
 
     print(f"Clusters analyzed: {len(results)}")
+    print(f"Run ID: {analysis.run.id}")
     for result in sorted(results, key=lambda item: (-(item.opportunity_score or 0.0), item.cluster_id or 0)):
         print(f"cluster_id={result.cluster_id} opportunity={result.opportunity_score if result.opportunity_score is not None else 'n/a'} status={result.status} qualification={result.qualification}")
     return 0
@@ -306,6 +289,9 @@ def _run_eligibility_evaluate(args: argparse.Namespace, config: CrawlerConfig) -
         clusters = [cluster]
 
     service = EligibilityService()
+    now = datetime.now(timezone.utc)
+    run = type("EligibilityRun", (), {"id": None, "model_version": service.model_version, "configuration": {"policy": "default"}, "cluster_count": len(clusters), "started_at": now, "completed_at": now})()
+    repository.save_eligibility_run(run)
     results = []
     for cluster in clusters:
         opportunity = None
@@ -342,9 +328,12 @@ def _run_eligibility_evaluate(args: argparse.Namespace, config: CrawlerConfig) -
             differentiation_confidence=differentiation.get("confidence") if differentiation is not None else None,
             evidence_coverage=opportunity.evidence_coverage if opportunity is not None else None,
         )
+        result.run_id = run.id
+        repository.save_cluster_eligibility_result(result)
         results.append(result)
 
     print(f"Clusters evaluated: {len(results)}")
+    print(f"Run ID: {run.id}")
     counts = {"eligible": 0, "ineligible": 0, "review_required": 0, "insufficient_data": 0}
     for result in results:
         counts[result.status] = counts.get(result.status, 0) + 1
@@ -438,8 +427,12 @@ def _run_selection_run(args: argparse.Namespace, config: CrawlerConfig) -> int:
     ]
 
     result = __import__("market_intelligence.selection.service", fromlist=["PortfolioSelector"]).PortfolioSelector().select(normalized_candidates)
+    repository.save_selection_run(result.run)
+    for item in result.selected:
+        repository.save_selected_opportunity(item, result.run.id)
     print(f"Eligible candidates: {len(normalized_candidates)}")
     print(f"Selected final portfolio: {len(result.selected)}")
+    print(f"Run ID: {result.run.id}")
     for item in result.selected:
         print(
             f"cluster_id={item.cluster_id} buyer_group={item.buyer_group} score={item.opportunity_score:.2f} "
@@ -450,7 +443,8 @@ def _run_selection_run(args: argparse.Namespace, config: CrawlerConfig) -> int:
 
 def _run_deep_research(args: argparse.Namespace, config: CrawlerConfig) -> int:
     repository = _repository(config)
-    clusters = repository.list_clusters(limit=args.limit)
+    selection_run_id = getattr(args, "selection_run", None)
+    clusters = _load_candidate_clusters(repository, limit=args.limit, cluster_id=None, selection_run_id=selection_run_id)
     if args.cluster_id is not None:
         cluster = repository.get_cluster_by_id(args.cluster_id)
         if cluster is None:
@@ -458,8 +452,13 @@ def _run_deep_research(args: argparse.Namespace, config: CrawlerConfig) -> int:
         clusters = [cluster]
 
     service = DeepResearchService()
-    result = service.run(clusters, top=args.top, selection_run_id=getattr(args, "selection_run", None))
+    result = service.run(clusters, top=args.top, selection_run_id=selection_run_id)
+    repository.save_deep_research_run(result.run)
+    for dossier in result.dossiers:
+        dossier.run_id = result.run.id
+        repository.save_deep_research_dossier(dossier)
     print(f"Deep research dossiers: {len(result.dossiers)}")
+    print(f"Run ID: {result.run.id}")
     for dossier in result.dossiers:
         print(
             f"cluster_id={dossier.cluster_id} rank={dossier.research_rank} "
@@ -502,7 +501,7 @@ def _run_deep_research_show(args: argparse.Namespace, config: CrawlerConfig) -> 
 
 def _run_deep_research_export(args: argparse.Namespace, config: CrawlerConfig) -> int:
     repository = _repository(config)
-    clusters = repository.list_clusters(limit=max(1, args.top))
+    clusters = _load_candidate_clusters(repository, limit=max(1, args.top), selection_run_id=args.selection_run)
     result = DeepResearchService().run(clusters, top=args.top, selection_run_id=args.selection_run)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -518,8 +517,23 @@ def _run_deep_research_export(args: argparse.Namespace, config: CrawlerConfig) -
     return 0
 
 
-def _load_candidate_clusters(repository: SqlAlchemyProductRepository, limit: int = 25, cluster_id: int | None = None):
-    clusters = repository.list_clusters(limit=limit)
+def _load_candidate_clusters(
+    repository: SqlAlchemyProductRepository,
+    limit: int = 25,
+    cluster_id: int | None = None,
+    selection_run_id: int | None = None,
+):
+    if selection_run_id is not None:
+        run = repository.get_selection_run(selection_run_id)
+        if run is None:
+            raise ValueError(f"Selection run {selection_run_id} não encontrado.")
+        rows = repository.list_selected_opportunities(selection_run_id, limit=limit)
+        clusters = [repository.get_cluster_by_id(int(row["cluster_id"])) for row in rows]
+        clusters = [cluster for cluster in clusters if cluster is not None]
+        if not clusters:
+            raise ValueError(f"Selection run {selection_run_id} não possui oportunidades persistidas.")
+    else:
+        clusters = repository.list_clusters(limit=limit)
     if cluster_id is not None:
         cluster = repository.get_cluster_by_id(cluster_id)
         if cluster is None:
@@ -552,15 +566,24 @@ def _build_ease_lookup(repository: SqlAlchemyProductRepository, clusters: list) 
 
 def _run_top10_select(args: argparse.Namespace, config: CrawlerConfig) -> int:
     repository = _repository(config)
-    clusters = _load_candidate_clusters(repository, limit=max(1, args.limit), cluster_id=getattr(args, "cluster_id", None))
+    clusters = _load_candidate_clusters(repository, limit=max(1, args.limit), cluster_id=getattr(args, "cluster_id", None), selection_run_id=getattr(args, "selection_run", None))
     research = DeepResearchService().run(clusters, top=max(1, args.top), selection_run_id=getattr(args, "selection_run", None))
     selection = Top10Selector().select(
         research.dossiers,
         opportunity_scores=_opportunity_score_lookup(repository, clusters),
         build_ease_scores=_build_ease_lookup(repository, clusters),
     )
+    repository.save_deep_research_run(research.run)
+    for dossier in research.dossiers:
+        dossier.run_id = research.run.id
+        repository.save_deep_research_dossier(dossier)
+    selection.run.deep_research_run_id = research.run.id
+    repository.save_top10_run(selection.run)
+    for item in selection.selected:
+        repository.save_top10_opportunity(item, selection.run.id)
     print(f"Candidates: {len(research.dossiers)}")
     print(f"Selected: {len(selection.selected)}")
+    print(f"Run ID: {selection.run.id}")
     for item in selection.selected:
         print(f"{item.top10_rank}. {item.cluster_name or item.cluster_id} | Opportunity: {item.opportunity_score:.2f} | Research Confidence: {item.research_confidence:.2f} | Selection Utility: {item.top10_selection_utility:.2f}")
     return 0
@@ -602,7 +625,7 @@ def _run_top10_show(args: argparse.Namespace, config: CrawlerConfig) -> int:
 
 def _run_top10_export(args: argparse.Namespace, config: CrawlerConfig) -> int:
     repository = _repository(config)
-    clusters = _load_candidate_clusters(repository, limit=max(1, args.top), cluster_id=None)
+    clusters = _load_candidate_clusters(repository, limit=max(1, args.top), cluster_id=None, selection_run_id=args.selection_run)
     research = DeepResearchService().run(clusters, top=max(1, args.top), selection_run_id=args.selection_run)
     selection = Top10Selector().select(
         research.dossiers,
@@ -631,6 +654,7 @@ def _run_thesis_show(args: argparse.Namespace, config: CrawlerConfig) -> int:
         raise ValueError("Nenhum cluster disponível para gerar tese.")
     dossier = DeepResearchService().research_cluster(cluster)
     thesis = OpportunityThesisService().create(cluster, dossier, opportunity_score=repository.latest_cluster_opportunity_score(cluster.id).get("opportunity_score") if repository.latest_cluster_opportunity_score(cluster.id) else None)
+    repository.save_thesis(thesis)
     print(f"{cluster.name}")
     print(f"Target Buyer: {thesis.target_buyer}")
     print(f"Problem: {thesis.problem}")
@@ -646,7 +670,7 @@ def _run_thesis_show(args: argparse.Namespace, config: CrawlerConfig) -> int:
 
 def _run_blueprint_generate(args: argparse.Namespace, config: CrawlerConfig) -> int:
     repository = _repository(config)
-    clusters = _load_candidate_clusters(repository, limit=max(1, args.limit), cluster_id=getattr(args, "cluster_id", None))
+    clusters = _load_candidate_clusters(repository, limit=max(1, args.limit), cluster_id=getattr(args, "cluster_id", None), selection_run_id=getattr(args, "selection_run", None))
     research = DeepResearchService().run(clusters, top=max(1, args.top), selection_run_id=getattr(args, "selection_run", None))
     selection = Top10Selector().select(
         research.dossiers,
@@ -661,7 +685,9 @@ def _run_blueprint_generate(args: argparse.Namespace, config: CrawlerConfig) -> 
         if cluster is None or dossier is None:
             continue
         thesis = OpportunityThesisService().create(cluster, dossier, opportunity_score=item.opportunity_score)
+        repository.save_thesis(thesis)
         blueprint = service.create(cluster, dossier, thesis)
+        repository.save_blueprint(blueprint)
         blueprints.append(blueprint)
     print(f"Generated {len(blueprints)} blueprints")
     for blueprint in blueprints:
@@ -687,6 +713,58 @@ def _run_blueprint_show(args: argparse.Namespace, config: CrawlerConfig) -> int:
     for feature in blueprint.differentiation_features:
         print(f"- {feature}")
     print(f"Estimated build: {blueprint.estimated_build_hours}h")
+    return 0
+
+
+def _run_report_build(args: argparse.Namespace, config: CrawlerConfig) -> int:
+    if args.top < 1 or args.top > 100:
+        raise ValueError("--top deve estar entre 1 e 100.")
+    if args.top10 < 1 or args.top10 > 10:
+        raise ValueError("--top10 deve estar entre 1 e 10.")
+    repository = _repository(config)
+    report = EditorialReportService(repository).build(
+        selection_run_id=args.selection_run,
+        top=args.top,
+        top10_count=args.top10,
+    )
+    formats = [item for item in args.formats.split(",") if item.strip()]
+    paths = ReportExporter().export(report, args.output_dir, formats)
+    print(f"Report ID: {report.snapshot.report_id}")
+    print(f"Selection Run ID: {report.snapshot.selection_run_id}")
+    print(f"Deep Research Run ID: {report.snapshot.deep_research_run_id or 'n/a'}")
+    print(f"Opportunities: {len(report.ranking)} | Top 10: {len(report.top10)}")
+    for format_name, path in paths.items():
+        print(f"{format_name.upper()}: {path}")
+    return 0
+
+
+def _run_report_show(args: argparse.Namespace, config: CrawlerConfig) -> int:
+    root = Path(args.output_dir)
+    if args.report_id:
+        path = root / args.report_id / "report.json"
+    else:
+        candidates = sorted(root.glob("*/report.json")) if root.exists() else []
+        path = candidates[-1] if candidates else root / "missing" / "report.json"
+    if not path.exists():
+        raise ValueError(f"Nenhum report.json encontrado em {root}.")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    metadata = payload.get("metadata") or {}
+    summary = payload.get("summary") or {}
+    print(f"Report ID: {metadata.get('report_id')}")
+    print(f"Created at: {metadata.get('created_at')}")
+    print(f"Selection Run ID: {metadata.get('selection_run_id')}")
+    print(f"Opportunities: {summary.get('opportunity_count')} | Top 10: {summary.get('top10_count')}")
+    print(f"Path: {path}")
+    return 0
+
+
+def _run_pipeline_demo(args: argparse.Namespace, config: CrawlerConfig) -> int:
+    repository = _repository(config)
+    report, paths = build_demo_report(repository, args.output_dir)
+    print(f"Report ID: {report.snapshot.report_id}")
+    print(f"Opportunities: {len(report.ranking)} | Top 10: {len(report.top10)}")
+    for format_name, path in paths.items():
+        print(f"{format_name.upper()}: {path}")
     return 0
 
 
@@ -730,8 +808,14 @@ def main(argv: list[str] | None = None) -> int:
             return _run_blueprint_generate(args, config)
         if args.command == "blueprint" and args.blueprint_command == "show":
             return _run_blueprint_show(args, config)
+        if args.command == "report" and args.report_command == "build":
+            return _run_report_build(args, config)
+        if args.command == "report" and args.report_command == "show":
+            return _run_report_show(args, config)
+        if args.command == "pipeline" and args.pipeline_command == "demo":
+            return _run_pipeline_demo(args, config)
         raise ValueError(f"Comando não suportado: {args.command}")
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, RuntimeError) as exc:
         logging.error("%s", exc)
         return 2
 

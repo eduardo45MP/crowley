@@ -68,3 +68,17 @@ A seleção não usa apenas score descendente. Ela aplica quotas e diversificaç
 ## Deep research
 
 O deep research não altera o score principal. Ele apenas acrescenta observação e contexto para as oportunidades já elegíveis e selecionadas.
+
+## Revenue Efficiency Score
+
+Métrica editorial `revenue-efficiency-v1`:
+
+```text
+100 * Opportunity Score / (Opportunity Score + 2 * max(Build Hours, 1))
+```
+
+Usa somente o score persistido e `estimated_build_hours` do Product Blueprint. Fica em 0-100, evita divisão por zero, cresce com Opportunity Score e cai com esforço. É comparativa e não prevê vendas ou receita.
+
+## Pricing editorial
+
+`editorial-pricing-v1` preserva mínimo, mediana e máximo observados pelo Deep Research. A recomendação é `mediana * 1,10`, limitada ao intervalo observado e arredondada a duas casas. É heurística de posicionamento, não willingness-to-pay.

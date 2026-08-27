@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -81,6 +81,7 @@ class ProductBlueprint:
     warnings: list[str] = field(default_factory=list)
     status: str = "draft"
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    id: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -90,12 +91,12 @@ class ProductBlueprint:
             "target_buyer": self.target_buyer,
             "primary_problem": self.primary_problem,
             "value_proposition": self.value_proposition,
-            "sheets": [sheet.__dict__ for sheet in self.sheets],
-            "formulas": [formula.__dict__ for formula in self.formulas],
-            "inputs": [field.__dict__ for field in self.inputs],
-            "outputs": [field.__dict__ for field in self.outputs],
-            "dashboards": [dashboard.__dict__ for dashboard in self.dashboards],
-            "workflows": [workflow.__dict__ for workflow in self.workflows],
+            "sheets": [asdict(sheet) for sheet in self.sheets],
+            "formulas": [asdict(formula) for formula in self.formulas],
+            "inputs": [asdict(item) for item in self.inputs],
+            "outputs": [asdict(item) for item in self.outputs],
+            "dashboards": [asdict(dashboard) for dashboard in self.dashboards],
+            "workflows": [asdict(workflow) for workflow in self.workflows],
             "core_features": list(self.core_features),
             "differentiation_features": list(self.differentiation_features),
             "optional_features": list(self.optional_features),

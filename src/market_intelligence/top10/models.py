@@ -29,6 +29,7 @@ class Top10Opportunity:
     selection_reasons: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     selected_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    id: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +80,7 @@ class OpportunityThesis:
     evidence_refs: list[str] = field(default_factory=list)
     confidence: float = 0.0
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    id: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
